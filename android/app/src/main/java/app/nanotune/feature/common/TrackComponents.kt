@@ -90,10 +90,12 @@ fun TrackResultCard(
 fun TrackLinkChips(track: RecognizedTrack, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     FlowRow(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Apple's ShazamKit terms: when showing ShazamKit content for a song available on Apple
+        // Music, link to it in Apple Music. Keep this link first.
+        Links.appleMusic(track)?.let { url -> LinkChip("Listen on Apple Music", Icons.AutoMirrored.Filled.OpenInNew) { Links.open(context, url) } }
+        Links.shazamPage(track)?.let { url -> LinkChip("Shazam page", Icons.AutoMirrored.Filled.OpenInNew) { Links.open(context, url) } }
         LinkChip("YouTube", Icons.Filled.PlayCircle) { Links.open(context, Links.youTube(track)) }
         LinkChip("Spotify", Icons.Filled.Headphones) { Links.open(context, Links.spotify(track)) }
-        Links.appleMusic(track)?.let { url -> LinkChip("Apple Music", Icons.AutoMirrored.Filled.OpenInNew) { Links.open(context, url) } }
-        Links.shazamPage(track)?.let { url -> LinkChip("Shazam page", Icons.AutoMirrored.Filled.OpenInNew) { Links.open(context, url) } }
         LinkChip("Share", Icons.Filled.Share) { Links.share(context, track) }
     }
 }

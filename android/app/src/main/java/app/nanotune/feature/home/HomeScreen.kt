@@ -108,6 +108,8 @@ fun HomeScreen(
     val onTap: () -> Unit = {
         when {
             listening -> viewModel.cancel()
+            // If the engine can't run, explain what's missing without asking for the microphone.
+            engine != EngineStatus.READY && engine != EngineStatus.CHECKING -> viewModel.identify()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> viewModel.identify()
             else -> showRationale = true
         }

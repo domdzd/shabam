@@ -1,85 +1,92 @@
 # NanoTune — implementation plan and status
 
-This is the working checklist for the brief in [`Project.md`](../Project.md). It records what was
-built, what was verified, and what still depends on credentials or hardware that the agent did
-not have.
+Working checklist for the brief in [`Project.md`](../Project.md): what was built, what was verified, and
+what still depends on credentials or hardware the agent did not have.
 
-Legend: ✅ done and verified · 🟡 done, not verifiable here (needs device/credentials) · ⏳ not started · ❌ rejected (with reason)
+Legend: ✅ done and verified (tests/CI) · 🟡 done but not verifiable here (needs device/AAR/Apple key) ·
+⏳ not done · ❌ rejected (with reason)
 
 ## Phase 0 — feasibility
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 0.1 | Inspect repo/toolchain, choose package, min/target SDK | ✅ | Empty repo. `minSdk 26`, `targetSdk 36`, `compileSdk 36.1`. See [ANDROID_COMPATIBILITY.md](ANDROID_COMPATIBILITY.md). |
-| 0.2 | Read current ShazamKit Android docs | ✅ | SDK 2.1.1. Whole API reference was read; adapter uses only documented calls. |
-| 0.3 | How to obtain the AAR + transitive deps | ✅ | AAR is only downloadable after Apple sign-in (`developer.apple.com/download/all/?q=Android%20ShazamKit`). Deps: coroutines, OkHttp 4.12, Retrofit 2.11 + converter-gson. |
-| 0.4 | Media ID / private key / token rules / costs | ✅ | Requires **paid Apple Developer Program** (Certificates, Identifiers & Profiles). ES256 JWT, `kid` + `iss`/`iat`/`exp`, `exp` ≤ 15 777 000 s. See [RECOGNITION_PROVIDERS.md](RECOGNITION_PROVIDERS.md). |
-| 0.5 | PoC: record PCM and get one ShazamKit match | 🟡 | Code written (`android/app/src/shazamkit/`), compiled only when the AAR is present. Not run: no AAR, no Apple key, no device. |
-| 0.6 | Token from backend without key in APK | ✅ | `POST /api/v1/shazamkit/token` implemented and unit-tested with a throwaway P-256 key (signature + claims verified). |
+| 0.1 | Inspect repo/toolchain, choose package, SDKs | ✅ | Empty repo. App ID `io.github.domdzd.nanotune` (configurable), `minSdk 26`, `targetSdk`/`compileSdk 37`. [ANDROID_COMPATIBILITY.md](ANDROID_COMPATIBILITY.md) |
+| 0.2 | Read current ShazamKit Android docs | ✅ | SDK 2.1.1; full API reference read; adapter uses only documented calls. |
+| 0.3 | How to obtain the AAR + deps | ✅ | AAR only after Apple sign-in; not on Maven. Deps: coroutines, OkHttp 4.12, Retrofit 2.11 + converter-gson. |
+| 0.4 | Media ID / key / token rules / terms / cost | ✅ | Paid Apple Developer Program (99 USD/yr). ES256 JWT (`kid`; `iss`,`iat`,`exp` ≤ 6 months). Licence constraints recorded. [RECOGNITION_PROVIDERS.md](RECOGNITION_PROVIDERS.md) |
+| 0.5 | PoC: record PCM and get one ShazamKit match | 🟡 | Capture + streaming code written (`src/shazamkit/`); never compiled against the real AAR or run — AAR, key and device unavailable. |
+| 0.6 | Token from backend, no key in APK | ✅ | `POST /api/v1/shazamkit/token`; tests verify signature, header and claims with a throwaway P-256 key. |
 | 0.7 | Record setup steps + blockers | ✅ | [RECOGNITION_PROVIDERS.md](RECOGNITION_PROVIDERS.md) |
 
-**Blocker (documented, not hidden):** global music recognition needs a commercial catalogue. The
-official, per-request-free route (ShazamKit) needs an Apple Developer Program membership and the
-Apple-licensed AAR, neither of which the agent can obtain. No free, key-less, legitimate
-alternative exists for microphone snippets — AcoustID matches whole files, not 10-second
-microphone clips (analysis in RECOGNITION_PROVIDERS.md). The app therefore ships with an honest
-“recognition engine not configured” state until the owner completes the Apple setup, and the
-backend can optionally route to a paid provider that the owner explicitly enables.
+**Blocker (documented):** identifying songs needs a commercial catalogue. The official route (ShazamKit) needs
+Apple's licensed AAR and a paid Apple Developer membership — owner actions. No legitimate free, key-less
+alternative works for microphone clips (AcoustID matches whole files). The app therefore shows an honest
+"engine not included / not configured" state until the owner completes the Apple setup. The rest of the
+product was built and tested so that only those steps remain.
 
 ## Phase 1 — minimum viable app
 
 | Item | Status |
 |------|--------|
-| Kotlin + Compose app builds (CI) | ✅ |
-| Home / Identify screen, permission explanation + runtime permission | ✅ |
-| ShazamKit single-shot recognition (streaming session, stops at first match) | 🟡 |
-| Match / no-match / error / not-configured states | ✅ |
+| Kotlin + Compose app builds (CI, debug + R8 release) | ✅ |
+| Identify screen, permission explanation, runtime permission | ✅ (code) · 🟡 on device |
+| ShazamKit single-shot recognition (streaming, stops at first match) | 🟡 |
+| Match / no-match / not-configured / error states | ✅ logic unit-tested · 🟡 UI on device |
 | Track result card | ✅ |
-| Local Room history | ✅ |
+| Local Room history | ✅ Robolectric-tested |
 | No account required | ✅ |
 
 ## Phase 2 — local experience
 
 | Item | Status |
 |------|--------|
-| Listening session (StreamingSession, continuous or interval mode) | 🟡 |
-| Microphone foreground service + persistent notification with Stop/Pause | ✅ (code + manifest), 🟡 on-device |
-| Duplicate prevention (configurable cooldown, default 4 min) | ✅ unit-tested |
-| History grouped by day/session, search/filter, favourites | ✅ |
-| Track details + YouTube/Spotify/Apple Music/share links | ✅ |
-| CSV/JSON export (Storage Access Framework, no storage permission) | ✅ unit-tested |
+| Listening session (StreamingSession; continuous or interval) | 🟡 |
+| Microphone foreground service + notification with Pause/Stop | ✅ code/manifest · 🟡 on device |
+| Duplicate prevention (sliding cooldown, default 4 min, 3–10 configurable) | ✅ unit-tested |
+| History by day/session, search, date + favourite filters | ✅ |
+| Favourites | ✅ |
+| Track details + Apple Music / Shazam / YouTube / Spotify links, share | ✅ |
+| CSV/JSON export (SAF) | ✅ unit-tested |
 | Settings, privacy and open-source notices screens | ✅ |
-| MusicBrainz ISRC enrichment (optional, Wi-Fi-only switch, 1 req/s) | ✅ |
+| MusicBrainz ISRC enrichment (optional, Wi-Fi-only, 1 req/s) | ✅ code · 🟡 not verified (MusicBrainz docs unreachable from sandbox) |
 
 ## Phase 3 — backend + optional account
 
 | Item | Status |
 |------|--------|
-| FastAPI backend + Docker Compose | ✅ |
-| Secure ShazamKit token endpoint + caching + anonymous rate limit | ✅ tested |
-| Registration/login/refresh (rotation + reuse detection)/logout, Argon2id | ✅ tested |
-| History/favourites/settings sync with tombstones | ✅ tested |
+| FastAPI backend + Docker Compose | ✅ (Docker build + smoke test in CI) |
+| ShazamKit token endpoint, caching, anonymous rate limits | ✅ tested |
+| Register / login / refresh rotation + reuse detection / logout, Argon2id | ✅ tested |
+| History / favourites / settings sync with tombstones | ✅ backend tested · ✅ app merge logic tested · 🟡 two-phone sync on devices |
 | Account + cloud data deletion | ✅ tested |
-| Deployment docs | ✅ [DEPLOYMENT.md](DEPLOYMENT.md) |
-| Email verification / password reset | ⏳ intentionally not implemented; documented as unavailable (no SMTP in default deploy) |
+| Deployment, backup/restore docs | ✅ [DEPLOYMENT.md](DEPLOYMENT.md) |
+| Email verification / password reset | ⏳ not implemented (no SMTP flow); app and config report it as unavailable |
 
 ## Phase 4 — enhanced recognition
 
 | Item | Status |
 |------|--------|
-| Server-side multi-provider routing, timeouts, daily quotas, kill switch | ✅ tested with mocked providers |
-| Result reconciliation + provider provenance | ✅ tested |
-| AudD / ACRCloud adapters (disabled by default, paid, explicit opt-in) | ✅ adapters + mocked tests; never called with live keys |
-| AcoustID/Chromaprint adapter | ❌ rejected: AcoustID needs the whole-file duration and matches from the start of a track, so it cannot match microphone snippets. See RECOGNITION_PROVIDERS.md. |
-| Enhanced UI only when ≥ 2 usable providers + signed in + user consent | ✅ |
+| Server-side routing, timeouts, per-provider + per-user daily quotas, kill switch | ✅ tested with fake providers |
+| Reconciliation + provenance (single / agree / conflict) | ✅ tested |
+| Client gating (≥ 2 engines, signed in, explicit consent) + upload of a 16 kHz clip | ✅ code · 🟡 untested end to end |
+| AudD / ACRCloud adapters | ⏳ not written — brief forbids paid providers in v1, and their docs were unreachable (no fabricated APIs). Plug-in point documented. |
+| AcoustID/Chromaprint adapter | ❌ rejected — cannot match microphone snippets (see RECOGNITION_PROVIDERS.md) |
 
 ## Phase 5 — release preparation
 
 | Item | Status |
 |------|--------|
-| App icon and branding (original vector icon, easy to rename) | ✅ |
-| Release build + signing instructions | ✅ [RELEASE.md](RELEASE.md) |
-| Backend backup/restore | ✅ in DEPLOYMENT.md |
-| Privacy policy + licence notices | ✅ |
-| Device compatibility matrix | 🟡 template in ANDROID_COMPATIBILITY.md; no physical devices were available |
-| APK sideloading guide | ✅ README |
+| App icon and branding (original vector; name/ID/colours in one place) | ✅ |
+| Release build + signing instructions, CI releases | ✅ [RELEASE.md](RELEASE.md) |
+| Backend backup/restore | ✅ |
+| Privacy notes + licence notices (in app and docs) | ✅ |
+| Device compatibility matrix | 🟡 template only — no devices available |
+| APK sideloading guide | ✅ README / RELEASE.md |
+
+## Next steps for the owner
+
+1. Apple: membership, AAR download, Media ID + Media Services key.
+2. Deploy the backend with the key; check `/api/v1/config`.
+3. Build with the AAR (locally or via `SHAZAMKIT_AAR_URL`), install, set the server URL.
+4. Run docs/TESTING.md on a real device; fix anything the first real ShazamKit compile reports.
+5. Optionally add your own release keystore secrets so updates install over each other.

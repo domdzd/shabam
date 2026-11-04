@@ -10,3 +10,9 @@
     *** Companion;
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# Backend/MusicBrainz DTOs and navigation routes are (de)serialised by kotlinx.serialization through
+# Retrofit's converter, which resolves serializers from generic signatures at runtime.
+-keep @kotlinx.serialization.Serializable class app.nanotune.** { *; }
+-keep,allowobfuscation interface app.nanotune.data.remote.BackendApi
+-keepattributes Signature, InnerClasses, EnclosingMethod, RuntimeVisibleAnnotations, AnnotationDefault
