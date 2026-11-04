@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Secrets — never commit these
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.p8
+*.pem
+*.key
+*.jks
+*.keystore
+keystore.properties
+secrets/
+deploy/secrets/
+
+# Apple ShazamKit Android SDK (licensed by Apple; obtain it yourself, do not redistribute)
+android/app/libs/*.aar
+
+# ---------------------------------------------------------------------------
+# Android / Gradle
+# ---------------------------------------------------------------------------
+.gradle/
+.kotlin/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+android/app/release/
+.idea/
+*.iml
+.navigation/
+output.json
+
+# ---------------------------------------------------------------------------
+# Python backend
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---------------------------------------------------------------------------
+# OS / editors
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
