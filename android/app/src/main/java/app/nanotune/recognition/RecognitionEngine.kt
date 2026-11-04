@@ -18,6 +18,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs one "tap to identify" attempt end to end: checks the engine is usable *before* opening
@@ -129,10 +130,13 @@ class RecognitionEngine(
         }
         val session = IdentifySession()
         val finished = CompletableDeferred<RecognitionOutcome>()
+        val deadlinePassed = AtomicBoolean(false)
         val collector = launch {
             stream.outcomes.collect { outcome ->
                 when (val decision = session.onOutcome(outcome)) {
-                    IdentifySession.Decision.Continue -> Unit
+                    IdentifySession.Decision.Continue ->
+                        // After the deadline, the engine's verdict on the final audio settles it.
+                        if (deadlinePassed.get()) finished.complete(session.onDeadline())
                     IdentifySession.Decision.RefreshTokenAndContinue -> tokenSource.get(forceRefresh = true)
                     is IdentifySession.Decision.Finish -> finished.complete(decision.outcome)
                 }
@@ -163,6 +167,7 @@ class RecognitionEngine(
             }
         }
         reader.join()
+        deadlinePassed.set(true)
         buffer.fill(0)
         // Give the engine a moment to answer for the final seconds of audio.
         val result = withTimeoutOrNull(FINAL_ANSWER_GRACE_MS) { finished.await() }

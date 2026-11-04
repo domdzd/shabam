@@ -80,6 +80,7 @@ class BackendClient(
         is java.net.UnknownHostException -> "Can't reach the NanoTune server. Check your internet connection and the server address."
         is java.net.SocketTimeoutException -> "The NanoTune server took too long to respond."
         is javax.net.ssl.SSLException -> "A secure connection to the NanoTune server could not be established."
+        is java.net.UnknownServiceException -> "This build only connects to https:// server addresses."
         else -> "Network error while contacting the NanoTune server."
     }
 

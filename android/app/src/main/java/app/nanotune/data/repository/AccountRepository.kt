@@ -81,7 +81,7 @@ class AccountRepository(
         // Another coroutine refreshed while we waited for the lock.
         if (current.accessToken != stale.accessToken && current.accessExpiresAt - EXPIRY_MARGIN_MS > clock()) return current
         when (val result = backend.call { refresh(RefreshRequestDto(current.refreshToken)) }) {
-            is ApiResult.Ok -> save(result.value)
+            is ApiResult.Ok -> runCatching { save(result.value) }.getOrNull()
             is ApiResult.HttpError -> {
                 if (result.status == 401 || result.status == 403) credentials.clearAccount()
                 null
@@ -92,9 +92,11 @@ class AccountRepository(
 
     private suspend fun authenticate(call: suspend BackendApi.() -> Response<TokenPairDto>): AuthResult =
         when (val result = backend.call(call)) {
-            is ApiResult.Ok -> {
+            is ApiResult.Ok -> try {
                 save(result.value)
                 AuthResult.Success
+            } catch (e: IllegalStateException) {
+                AuthResult.Failure(e.message ?: "Couldn't store the sign-in securely on this device.")
             }
             is ApiResult.HttpError -> AuthResult.Failure(result.message)
             is ApiResult.NetworkError -> AuthResult.Failure(result.message)

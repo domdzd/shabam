@@ -102,7 +102,15 @@ class ListeningSessionService : LifecycleService() {
         lifecycleScope.launch {
             job?.cancelAndJoin()
             runJob = null
-            holder.reset(finalMessage, if (finalMessage != null) SessionStatus.ERROR else SessionStatus.IDLE)
+            // Keep the session id and counts so the screen can still show what was found.
+            holder.update {
+                it.copy(
+                    status = if (finalMessage != null) SessionStatus.ERROR else SessionStatus.IDLE,
+                    message = finalMessage,
+                    level = 0f,
+                    nextWindowAt = null,
+                )
+            }
             ServiceCompat.stopForeground(this@ListeningSessionService, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -160,7 +168,7 @@ class ListeningSessionService : LifecycleService() {
                     }
                 }
 
-                when (val end = listenWindow(provider, if (intervalMs != null) WINDOW_MS else null, filter, sessionId)) {
+                when (val end = listenWindow(provider, if (intervalMs != null) WINDOW_MS else null, filter, sessionId, prefs.sessionsOnMobileData)) {
                     WindowEnd.Completed -> {
                         backoffMs = INITIAL_BACKOFF_MS
                         if (intervalMs != null) {
@@ -202,6 +210,7 @@ class ListeningSessionService : LifecycleService() {
         windowMs: Long?,
         filter: DuplicateFilter,
         sessionId: String,
+        allowMobileData: Boolean,
     ): WindowEnd = coroutineScope {
         val recorder = when (val opened = container.audioCapture.open(provider.supportedSampleRates)) {
             is AudioCapture.OpenResult.Opened -> opened.recorder
@@ -252,6 +261,7 @@ class ListeningSessionService : LifecycleService() {
                 val streamStart = System.currentTimeMillis()
                 var bytes = 0L
                 var lastUiUpdate = 0L
+                var lastNetworkCheck = 0L
                 var silenced = false
                 while (isActive && !end.isCompleted) {
                     if (paused.value) {
@@ -283,6 +293,15 @@ class ListeningSessionService : LifecycleService() {
                     if (windowMs != null && elapsed >= windowMs) {
                         end.complete(WindowEnd.Completed)
                         break
+                    }
+                    if (elapsed - lastNetworkCheck >= NETWORK_POLICY_CHECK_MS) {
+                        lastNetworkCheck = elapsed
+                        val network = container.connectivity.current()
+                        if (!network.connected || (network.metered && !allowMobileData)) {
+                            // The main loop re-evaluates the network rules and waits.
+                            end.complete(WindowEnd.Completed)
+                            break
+                        }
                     }
                 }
                 buffer.fill(0)
@@ -328,6 +347,7 @@ class ListeningSessionService : LifecycleService() {
         private const val INITIAL_BACKOFF_MS = 5_000L
         private const val MAX_BACKOFF_MS = 120_000L
         private const val NETWORK_RECHECK_MS = 10_000L
+        private const val NETWORK_POLICY_CHECK_MS = 5_000L
         private const val MAX_AUTH_FAILURES = 2
     }
 }

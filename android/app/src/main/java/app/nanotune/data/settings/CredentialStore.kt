@@ -59,13 +59,17 @@ class CredentialStore(private val context: Context, private val cipher: Keystore
 
     suspend fun currentAccount(): AccountSession? = account.first()
 
+    /** Throws [IllegalStateException] if the Android Keystore cannot protect the tokens. */
     suspend fun saveAccount(session: AccountSession) {
+        val access = runCatching { cipher.encrypt(session.accessToken) }.getOrNull()
+        val refresh = runCatching { cipher.encrypt(session.refreshToken) }.getOrNull()
+        check(access != null && refresh != null) { "Secure storage (Android Keystore) is unavailable on this device." }
         context.credentialStore.edit { prefs ->
             prefs[USER_ID] = session.userId
             prefs[EMAIL] = session.email
-            prefs[ACCESS_TOKEN] = cipher.encrypt(session.accessToken)
+            prefs[ACCESS_TOKEN] = access
             prefs[ACCESS_EXPIRES_AT] = session.accessExpiresAt
-            prefs[REFRESH_TOKEN] = cipher.encrypt(session.refreshToken)
+            prefs[REFRESH_TOKEN] = refresh
         }
     }
 
@@ -99,13 +103,15 @@ class CredentialStore(private val context: Context, private val cipher: Keystore
         return CachedDeveloperToken(token, expiresAt)
     }
 
+    /** Best effort: if the Keystore is unusable the token simply stays in memory only. */
     suspend fun saveDeveloperToken(token: CachedDeveloperToken?) {
+        val encrypted = token?.let { runCatching { cipher.encrypt(it.token) }.getOrNull() }
         context.credentialStore.edit { prefs ->
-            if (token == null) {
+            if (token == null || encrypted == null) {
                 prefs.remove(DEV_TOKEN)
                 prefs.remove(DEV_TOKEN_EXPIRES_AT)
             } else {
-                prefs[DEV_TOKEN] = cipher.encrypt(token.token)
+                prefs[DEV_TOKEN] = encrypted
                 prefs[DEV_TOKEN_EXPIRES_AT] = token.expiresAtEpochSeconds
             }
         }
