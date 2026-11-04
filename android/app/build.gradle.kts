@@ -124,7 +124,13 @@ room {
 
 kotlin {
     compilerOptions {
-        optIn.add("androidx.compose.material3.ExperimentalMaterial3Api")
+        optIn.addAll(
+            "androidx.compose.material3.ExperimentalMaterial3Api",
+            "androidx.compose.foundation.ExperimentalFoundationApi",
+            "androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "kotlinx.coroutines.FlowPreview",
+        )
     }
 }
 
