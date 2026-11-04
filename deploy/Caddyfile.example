@@ -1,0 +1,7 @@
+# Simplest option if you have no reverse proxy yet: Caddy obtains TLS certificates automatically.
+api.example.com {
+    request_body {
+        max_size 3MB
+    }
+    reverse_proxy /api/* 127.0.0.1:8000
+}

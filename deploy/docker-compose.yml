@@ -1,0 +1,41 @@
+# NanoTune backend on a VPS.
+#
+#   cd /srv/projects/nanotune/deploy
+#   cp ../.env.example ../.env   # then edit it
+#   mkdir -p secrets && install -m 400 -o 10001 -g 10001 /path/to/AuthKey_XXXXXXXXXX.p8 secrets/apple_media_services.p8
+#   docker compose up -d --build
+#
+# The API listens on 127.0.0.1:8000 only; put your reverse proxy (nginx, Caddy, Traefik) in
+# front of it for HTTPS. See docs/DEPLOYMENT.md, nginx.conf.example and docker-compose.traefik.yml.
+services:
+  nanotune-api:
+    build: ../backend
+    image: nanotune-api:0.1.0
+    container_name: nanotune-api
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: sqlite:////data/nanotune.db
+      APPLE_PRIVATE_KEY_PATH: /run/secrets/apple_media_services.p8
+      # Only the reverse proxy can reach the container, so trust its X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - nanotune-data:/data
+      - ./secrets:/run/secrets:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  nanotune-data:

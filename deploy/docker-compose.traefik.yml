@@ -1,0 +1,20 @@
+# Optional override for an existing Traefik v2/v3 reverse proxy on an external Docker network.
+#   docker compose -f docker-compose.yml -f docker-compose.traefik.yml up -d --build
+# Replace api.example.com, the network name and the certresolver with your own.
+services:
+  nanotune-api:
+    ports: !reset []
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.nanotune.rule=Host(`api.example.com`) && PathPrefix(`/api/`)
+      - traefik.http.routers.nanotune.entrypoints=websecure
+      - traefik.http.routers.nanotune.tls=true
+      - traefik.http.routers.nanotune.tls.certresolver=letsencrypt
+      - traefik.http.services.nanotune.loadbalancer.server.port=8000
+
+networks:
+  proxy:
+    external: true

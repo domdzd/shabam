@@ -114,7 +114,8 @@ android {
         // Lint findings are reported (and printed to the CI log) but do not block the APK.
         abortOnError = false
         checkReleaseBuilds = false
-        textReport = true
+        // OkHttp/Retrofit are pinned on purpose (see libs.versions.toml).
+        disable += "NewerVersionAvailable"
     }
 }
 

@@ -1,0 +1,66 @@
+name: Backend
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  docker:
+    name: Docker image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build -t nanotune-api:ci backend
+      - name: Start container (read-only root FS, like docker-compose.yml)
+        run: |
+          docker run -d --name api --read-only --tmpfs /tmp -p 8000:8000 \
+            -e AUTH_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+            -v nanotune-data:/data nanotune-api:ci
+      - name: Check endpoints
+        run: |
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/v1/health && break; sleep 1; done
+          echo
+          curl -fsS http://127.0.0.1:8000/api/v1/config; echo
+          # No Apple key mounted: token endpoint must answer 503 shazamkit_not_configured.
+          code=$(curl -s -o /tmp/token.json -w "%{http_code}" -X POST http://127.0.0.1:8000/api/v1/shazamkit/token)
+          cat /tmp/token.json; echo
+          test "$code" = "503"
+          # Accounts work end to end.
+          curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/register -H 'content-type: application/json' \
+            -d '{"email":"ci@example.com","password":"a long enough password"}' > /tmp/register.json
+          python3 -c "import json; d=json.load(open('/tmp/register.json')); assert d['user']['email']=='ci@example.com'; print('register ok')"
+      - name: Container logs
+        if: always()
+        run: docker logs api

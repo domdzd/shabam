@@ -49,12 +49,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-sealed interface TrackDetailsState {
-    data object Loading : TrackDetailsState
-    data object Missing : TrackDetailsState
-    data class Loaded(val details: TrackDetails) : TrackDetailsState
-}
-
 class TrackDetailsViewModel(private val container: AppContainer, private val trackId: String) : ViewModel() {
     val details: StateFlow<TrackDetails?> = container.historyRepository.observeTrack(trackId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

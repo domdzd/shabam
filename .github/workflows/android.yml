@@ -86,6 +86,22 @@ jobs:
             -Pnanotune.apiBaseUrl="${NANOTUNE_API_BASE_URL}" \
             testDebugUnitTest assembleDebug assembleRelease lintDebug
 
+      - name: Unit test summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          for path in glob.glob("app/build/test-results/testDebugUnitTest/*.xml"):
+              root = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(root.get(key, 0))
+              for case in root.iter("testcase"):
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      print(f"FAILED {case.get('classname')}.{case.get('name')}")
+          print("Unit tests: {tests} run, {failures} failures, {errors} errors, {skipped} skipped".format(**totals))
+          PY
+
       - name: Print lint summary
         if: always()
         run: cat app/build/reports/lint-results-debug.txt 2>/dev/null | tail -n 150 || true

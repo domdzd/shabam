@@ -2,6 +2,7 @@ package app.nanotune
 
 import android.app.Application
 import android.content.Context
+import androidx.core.content.edit
 import app.nanotune.core.audio.AudioCapture
 import app.nanotune.core.network.Connectivity
 import app.nanotune.data.local.NanoTuneDatabase
@@ -113,11 +114,11 @@ class AppContainer(private val app: Application) {
         val prefs = app.getSharedPreferences("install", Context.MODE_PRIVATE)
         prefs.getString("install_id", null)?.let { return it }
         val id = UUID.randomUUID().toString()
-        prefs.edit().putString("install_id", id).apply()
+        prefs.edit { putString("install_id", id) }
         return id
     }
 
     fun resetInstallId() {
-        app.getSharedPreferences("install", Context.MODE_PRIVATE).edit().clear().apply()
+        app.getSharedPreferences("install", Context.MODE_PRIVATE).edit { clear() }
     }
 }
