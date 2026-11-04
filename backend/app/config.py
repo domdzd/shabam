@@ -76,6 +76,27 @@ class Settings(BaseSettings):
     enhanced_per_user_daily_limit: int = 25
     enhanced_provider_timeout_seconds: float = 10.0
 
+    #: Let phones without an account use the server's engines (per-install and per-IP daily caps).
+    server_recognition_anonymous: bool = False
+    server_recognition_per_install_daily_limit: int = 10
+    server_recognition_per_ip_daily_limit: int = 50
+    #: Order in which server-side engines are tried, comma separated.
+    provider_order: str = "audd,acrcloud"
+
+    # AudD (https://audd.io) — paid service with a trial. Disabled unless enabled AND given a limit.
+    audd_enabled: bool = False
+    audd_api_token: str = ""
+    audd_daily_limit: int = 0
+    #: Extra metadata blocks to request (comma separated, e.g. "apple_music,spotify").
+    audd_return: str = "apple_music,spotify"
+
+    # ACRCloud (https://www.acrcloud.com) — paid service with a trial. Same rules.
+    acrcloud_enabled: bool = False
+    acrcloud_host: str = ""
+    acrcloud_access_key: str = ""
+    acrcloud_access_secret: str = ""
+    acrcloud_daily_limit: int = 0
+
     @field_validator("shazamkit_token_ttl_seconds")
     @classmethod
     def _ttl_within_apple_limit(cls, value: int) -> int:

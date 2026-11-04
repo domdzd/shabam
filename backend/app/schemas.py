@@ -42,12 +42,24 @@ class EnhancedConfig(ApiModel):
     message: str | None = None
 
 
+class ServerEnginesConfig(ApiModel):
+    """Server-side engines usable directly (e.g. as the only engine, or to retry saved clips)."""
+
+    available: bool
+    anonymous: bool
+    requires_account: bool
+    max_upload_seconds: int
+    providers: list[ProviderInfo]
+    message: str | None = None
+
+
 class ServerConfig(ApiModel):
     api_version: int = 1
     server_name: str
     shazamkit: ShazamKitConfig
     accounts: AccountsConfig
     enhanced: EnhancedConfig
+    server_engines: ServerEnginesConfig
 
 
 class ShazamToken(ApiModel):

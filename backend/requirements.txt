@@ -9,3 +9,4 @@ argon2-cffi==25.1.0
 pyjwt[crypto]==2.15.1
 cryptography==50.0.2
 python-multipart==0.0.33
+httpx==0.28.1

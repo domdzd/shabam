@@ -11,7 +11,7 @@ from ..config import Settings
 from ..deps import client_ip, enforce, get_limiter, get_settings_dep, install_id
 from ..errors import ApiError
 from ..ratelimit import RateLimiter
-from ..schemas import AccountsConfig, EnhancedConfig, Health, ProviderInfo, ServerConfig, ShazamKitConfig, ShazamToken
+from ..schemas import AccountsConfig, EnhancedConfig, Health, ProviderInfo, ServerConfig, ServerEnginesConfig, ShazamKitConfig, ShazamToken
 
 router = APIRouter()
 
@@ -25,6 +25,8 @@ def health() -> Health:
 def config(request: Request, settings: Settings = Depends(get_settings_dep)) -> ServerConfig:
     enhanced = request.app.state.enhanced
     signer = request.app.state.signer
+    providers = [ProviderInfo(id=p.id, name=p.name, paid=p.paid, disclosure=p.disclosure) for p in enhanced.usable_providers()]
+    anonymous = settings.server_recognition_anonymous
     return ServerConfig(
         server_name=settings.server_name,
         shazamkit=ShazamKitConfig(available=signer is not None, token_ttl_seconds=settings.shazamkit_token_ttl_seconds if signer else None),
@@ -37,11 +39,16 @@ def config(request: Request, settings: Settings = Depends(get_settings_dep)) -> 
         enhanced=EnhancedConfig(
             available=enhanced.available(),
             max_upload_seconds=settings.enhanced_max_upload_seconds,
-            providers=[
-                ProviderInfo(id=p.id, name=p.name, paid=p.paid, disclosure=p.disclosure)
-                for p in enhanced.usable_providers()
-            ],
+            providers=providers,
             message=None if enhanced.available() else enhanced.unavailable_message(),
+        ),
+        server_engines=ServerEnginesConfig(
+            available=enhanced.server_available(),
+            anonymous=anonymous and enhanced.server_available(),
+            requires_account=not anonymous,
+            max_upload_seconds=settings.enhanced_max_upload_seconds,
+            providers=providers,
+            message=None if enhanced.server_available() else enhanced.server_unavailable_message(),
         ),
     )
 

@@ -1,22 +1,57 @@
-"""Builds the list of server-side providers from configuration.
+"""Builds the list of server-side engines from configuration.
 
-The default deployment ships **no** enabled provider: AcoustID cannot match microphone snippets
-(it fingerprints whole files and filters by total duration), and paid services (AudD, ACRCloud,
-...) must not be enabled without an explicit flag, a documented cost/limit and user disclosure.
-See docs/RECOGNITION_PROVIDERS.md for how to add an adapter.
+Nothing is enabled by default. An engine is only used when its ``*_ENABLED`` flag is true, its
+credentials are present and its ``*_DAILY_LIMIT`` is positive (a mandatory cost control).
+AcoustID is intentionally not offered: it cannot match microphone snippets.
 """
 
 from __future__ import annotations
 
+import logging
+
+import httpx
+
 from ..config import Settings
 from .base import ProviderAdapter
+from .providers.acrcloud import ACRCloudProvider
+from .providers.audd import AudDProvider
+
+log = logging.getLogger("nanotune.providers")
 
 
-def build_providers(settings: Settings) -> list[ProviderAdapter]:
-    providers: list[ProviderAdapter] = []
-    # Register adapters here, each behind its own *_ENABLED flag and a mandatory daily limit, e.g.:
-    #
-    #   if settings.example_enabled and settings.example_api_key and settings.example_daily_limit > 0:
-    #       providers.append(ExampleProvider(settings.example_api_key, settings.example_daily_limit))
-    #
-    return providers
+def build_providers(settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> list[ProviderAdapter]:
+    available: dict[str, ProviderAdapter] = {}
+    timeout = settings.enhanced_provider_timeout_seconds
+
+    if settings.audd_enabled:
+        if not settings.audd_api_token or settings.audd_daily_limit <= 0:
+            log.warning("AUDD_ENABLED is set but AUDD_API_TOKEN or a positive AUDD_DAILY_LIMIT is missing; AudD stays off.")
+        else:
+            available["audd"] = AudDProvider(
+                settings.audd_api_token,
+                settings.audd_daily_limit,
+                settings.audd_return,
+                transport=transport,
+                timeout_seconds=timeout,
+            )
+
+    if settings.acrcloud_enabled:
+        if not (settings.acrcloud_host and settings.acrcloud_access_key and settings.acrcloud_access_secret) or settings.acrcloud_daily_limit <= 0:
+            log.warning("ACRCLOUD_ENABLED is set but host/keys or a positive ACRCLOUD_DAILY_LIMIT are missing; ACRCloud stays off.")
+        else:
+            try:
+                available["acrcloud"] = ACRCloudProvider(
+                    settings.acrcloud_host,
+                    settings.acrcloud_access_key,
+                    settings.acrcloud_access_secret,
+                    settings.acrcloud_daily_limit,
+                    transport=transport,
+                    timeout_seconds=timeout,
+                )
+            except ValueError:
+                log.warning("ACRCLOUD_HOST is not a valid host name; ACRCloud stays off.")
+
+    order = [name.strip() for name in settings.provider_order.split(",") if name.strip()]
+    ordered = [available[name] for name in order if name in available]
+    ordered += [provider for name, provider in available.items() if name not in order]
+    return ordered

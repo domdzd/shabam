@@ -45,6 +45,18 @@ class EnhancedRouter:
         total = server + (1 if self.shazamkit_available else 0)
         return self.settings.accounts_available and server >= 1 and total >= 2
 
+    def server_available(self) -> bool:
+        """Server engines can be used directly (e.g. as the only engine) by someone."""
+        anyone = self.settings.accounts_available or self.settings.server_recognition_anonymous
+        return bool(self.usable_providers()) and anyone
+
+    def server_unavailable_message(self) -> str:
+        if self.settings.recognition_kill_switch:
+            return "Server-side recognition is switched off on this server."
+        if not self.usable_providers():
+            return "No recognition engines are configured on this server."
+        return "Server engines need an account, and accounts are disabled on this server."
+
     def unavailable_message(self) -> str:
         if self.settings.recognition_kill_switch:
             return "Enhanced recognition is switched off on this server."
@@ -72,14 +84,20 @@ class EnhancedRouter:
         return self.settings.enhanced_per_user_daily_limit - self._usage(db, f"user:{user_id}").count
 
     # ---------------------------------------------------------------- routing
-    async def identify(self, db: Session, user_id: str, clip: ClipInfo) -> EnhancedOutcome:
+    async def identify(self, db: Session, quota_scopes: list[tuple[str, int]], clip: ClipInfo) -> EnhancedOutcome:
+        """Runs the clip through the server engines.
+
+        ``quota_scopes`` are (scope, daily limit) pairs that must all have capacity, e.g. the user,
+        or the install plus the client IP for anonymous use. Each attempt counts against all of them.
+        """
         providers = self.usable_providers()
-        if not self.available() or not providers:
-            return EnhancedOutcome("unavailable", None, [], [], self.unavailable_message())
-        user_usage = self._usage(db, f"user:{user_id}")
-        if user_usage.count >= self.settings.enhanced_per_user_daily_limit:
-            return EnhancedOutcome("unavailable", None, [], [], "Daily enhanced-recognition limit reached. Try again tomorrow.")
-        user_usage.count += 1
+        if not providers:
+            return EnhancedOutcome("unavailable", None, [], [], self.server_unavailable_message())
+        usages = [(self._usage(db, scope), limit) for scope, limit in quota_scopes]
+        if any(usage.count >= limit for usage, limit in usages):
+            return EnhancedOutcome("unavailable", None, [], [], "Daily recognition limit reached for this device. Try again tomorrow.")
+        for usage, _limit in usages:
+            usage.count += 1
         db.commit()
 
         matches: list[ProviderMatch] = []
