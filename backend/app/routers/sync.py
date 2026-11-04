@@ -7,7 +7,9 @@ pull everything with ``seq > cursor``. The same LWW rule runs on the phone
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+import threading
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,11 @@ from ..schemas import SyncSettings as SyncSettingsIn
 router = APIRouter()
 
 PAGE_SIZE = 500
+
+# Pushes are serialised so sequence numbers are handed out (and committed) strictly in order;
+# otherwise a concurrent push could commit a lower seq after a client already pulled past it.
+# The API runs a single worker process, so a process-wide lock is sufficient.
+_push_lock = threading.Lock()
 
 
 def incoming_wins(stored_updated_at: int | None, incoming_updated_at: int) -> bool:
@@ -46,7 +53,16 @@ def push(
     enforce(limiter, f"sync:{user.id}", settings.sync_rate_per_user_per_minute, 60)
     if len(body.recognitions) > settings.sync_max_batch or len(body.favourites) > settings.sync_max_batch:
         raise ApiError(413, "batch_too_large", f"Send at most {settings.sync_max_batch} records per request.")
+    with _push_lock:
+        db.refresh(user)  # read the current sequence counter inside the critical section
+        try:
+            return _apply_push(body, user, settings, db)
+        except Exception:
+            db.rollback()
+            raise
 
+
+def _apply_push(body: SyncPush, user: User, settings: Settings, db: Session) -> SyncPushResult:
     existing_count = db.scalar(select(func.count()).select_from(SyncRecognition).where(SyncRecognition.user_id == user.id)) or 0
     accepted = ignored = 0
 

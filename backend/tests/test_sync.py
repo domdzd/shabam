@@ -117,3 +117,36 @@ def test_field_length_validation(client):
     tokens = register(client)
     response = client.put("/api/v1/sync", headers=auth(tokens), json={"recognitions": [recognition("r1", 1, title="x" * 600)]})
     assert response.status_code == 422
+
+
+def test_concurrent_pushes_get_unique_increasing_sequence_numbers(make_client):
+    import threading
+
+    client = make_client(sync_rate_per_user_per_minute=10_000)
+    tokens = register(client)
+    errors: list[str] = []
+
+    def push(start: int) -> None:
+        for i in range(start, start + 10):
+            response = client.put("/api/v1/sync", headers=auth(tokens), json={"recognitions": [recognition(f"t{i}", 1)]})
+            if response.status_code != 200:
+                errors.append(response.text)
+
+    threads = [threading.Thread(target=push, args=(n * 100,)) for n in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+    db = client.app.state.database.session_factory()
+    from sqlalchemy import select
+
+    from app.models import SyncRecognition, User
+
+    seqs = [row.seq for row in db.scalars(select(SyncRecognition))]
+    user = db.scalar(select(User))
+    db.close()
+    assert len(seqs) == 40
+    assert len(set(seqs)) == 40
+    assert max(seqs) == user.sync_seq == 40

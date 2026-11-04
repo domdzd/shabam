@@ -4,7 +4,7 @@
 
 | Suite | Command | Where it runs | Latest result |
 |---|---|---|---|
-| Backend (pytest, 51 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **51 passed** (local, Python 3.13; CI green) |
+| Backend (pytest, 52 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **52 passed** (local, Python 3.13; CI green) |
 | Backend Docker smoke test | builds the image, runs it read-only, checks health/config/token 503/register | `backend.yml` | **Passed** |
 | Android unit tests (JUnit + Robolectric) | `cd android && ./gradlew testDebugUnitTest` | `android.yml` (count printed in the "Unit test summary" step) | **Passed** |
 | Android lint | `./gradlew lintDebug` | `android.yml` | **0 errors** (remaining warnings are intentional dependency pins and debug-only network config) |
@@ -18,7 +18,7 @@ login/registration rate limits; closed registration; accounts disabled without a
 removes all cloud data; sync round-trip, last-writer-wins, tombstones, account isolation, pagination without
 gaps, batch and quota limits, field validation; enhanced routing: availability rules (needs ≥ 2 engines),
 kill switch, auth, fallback vs. consensus, agreement/conflict reporting, provider errors/timeouts/no-match,
-per-provider and per-user daily limits, WAV validation; migrations create the schema. Providers in these tests
+per-provider and per-user daily limits, WAV validation; concurrent pushes get unique, ordered sequence numbers; migrations create the schema. Providers in these tests
 are in-process fakes — no live API is ever called.
 
 ### What the Android tests cover
