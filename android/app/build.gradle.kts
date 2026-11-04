@@ -39,15 +39,13 @@ val releaseKeystorePath: String? = providers.environmentVariable("NANOTUNE_KEYST
 android {
     namespace = "app.nanotune"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version = release(37)
     }
 
     defaultConfig {
         applicationId = providers.gradleProperty("nanotune.applicationId").getOrElse("io.github.domdzd.nanotune")
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
