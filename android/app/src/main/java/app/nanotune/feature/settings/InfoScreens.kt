@@ -57,15 +57,24 @@ fun PrivacyScreen(onBack: () -> Unit) = TextPage(
             "listening session keeps the microphone on only after you start it, and only while its notification is " +
             "visible. Sessions never start by themselves or after a reboot.",
         "Audio" to
-            "Raw audio is processed in memory and discarded immediately. It is never saved to storage. With the " +
-            "standard engine (Apple ShazamKit) the phone turns the audio into a compact, non-reversible signature and " +
-            "only that signature is sent to Apple's Shazam service; the audio itself never leaves the phone.",
+            "By default, raw audio is processed in memory and discarded immediately; it is never saved to storage. " +
+            "With the standard engine (Apple ShazamKit) the phone turns the audio into a compact, non-reversible " +
+            "signature and only that signature is sent to Apple's Shazam service; the audio itself never leaves the phone.",
+        "Saved recordings (off by default)" to
+            "Only if you turn on Settings › Recordings › Keep recordings: the audio of identifications (only the ones " +
+            "that weren't identified, unless you choose every recording) is stored as files in NanoTune's private " +
+            "storage on this phone, so you can play, share or identify it later. Recordings may contain conversations or " +
+            "other nearby sounds. They are not backed up or synced, are deleted after the period you choose (7/30/90 days " +
+            "or never), and leave the phone only when you tap Share or identify one with your server's engines.",
         "Internet" to
             "ShazamKit needs an internet connection to search the Shazam catalogue. Your NanoTune server provides " +
             "short-lived developer tokens for this and never receives audio from the standard engine.",
-        "Enhanced recognition (off by default)" to
-            "Only if you sign in, your server offers it, and you agree: when Shazam finds no match, a clip of at most " +
-            "12 seconds is uploaded to your NanoTune server and forwarded to the engines it lists. It is not stored.",
+        "Your server's recognition engines (off by default)" to
+            "Only if your NanoTune server offers engines such as AudD or ACRCloud and you agree to the engines it lists: " +
+            "a clip of at most 12 seconds (16 kHz mono) is uploaded to your server and forwarded to them — as the main " +
+            "engine when this build has no on-device engine, when you identify a saved recording, or (signed in) as a " +
+            "fallback after Shazam finds nothing. Clips are not stored on the server. If the list of engines changes, " +
+            "NanoTune asks again.",
         "Metadata" to
             "Optionally, NanoTune looks up album and release date on MusicBrainz using the song's ISRC code, and loads " +
             "cover art from the URLs the engine returns (or the Cover Art Archive). You can turn this off or limit it to Wi-Fi.",
@@ -73,8 +82,9 @@ fun PrivacyScreen(onBack: () -> Unit) = TextPage(
             "History, favourites and settings are stored only on this phone. An account is optional; if you sign in, " +
             "they are synchronised with the NanoTune server you configured.",
         "Deletion" to
-            "Settings › Delete local data erases everything on this phone. Account › Delete account removes your " +
-            "account and all cloud data from the server. Single songs can be deleted from History.",
+            "Settings › Delete local data erases everything on this phone, including saved recordings. Account › Delete " +
+            "account removes your account and all cloud data from the server. Single songs and recordings can be deleted " +
+            "from History.",
         "No tracking" to
             "NanoTune contains no advertising, analytics or crash-reporting SDKs. Anonymous token requests carry a random " +
             "per-install ID so the server can rate-limit fairly; it is not linked to you and is reset when you delete local data.",

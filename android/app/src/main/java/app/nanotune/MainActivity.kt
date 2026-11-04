@@ -23,17 +23,19 @@ import app.nanotune.data.settings.AppSettings
 import app.nanotune.feature.common.LocalAllowNetworkImages
 import app.nanotune.navigation.NanoTuneNavHost
 import app.nanotune.navigation.SessionRoute
+import app.nanotune.navigation.TrackRoute
 import app.nanotune.ui.theme.NanoTuneTheme
 import app.nanotune.ui.theme.isAppInDarkTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
     private val openSessionRequests = MutableStateFlow(0)
+    private val openTrackRequests = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as NanoTuneApp).container
-        if (intent?.action == ACTION_OPEN_SESSION) openSessionRequests.value++
+        handleIntent(intent)
 
         setContent {
             val settings by container.settingsRepository.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
@@ -57,6 +59,13 @@ class MainActivity : ComponentActivity() {
                         LaunchedEffect(openRequests) {
                             if (openRequests > 0) navController.navigate(SessionRoute) { launchSingleTop = true }
                         }
+                        val trackRequest by openTrackRequests.collectAsStateWithLifecycle()
+                        LaunchedEffect(trackRequest) {
+                            trackRequest?.let {
+                                navController.navigate(TrackRoute(it))
+                                openTrackRequests.value = null
+                            }
+                        }
                     }
                 }
             }
@@ -65,10 +74,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == ACTION_OPEN_SESSION) openSessionRequests.value++
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        when (intent?.action) {
+            ACTION_OPEN_SESSION -> openSessionRequests.value++
+            ACTION_OPEN_TRACK -> openTrackRequests.value = intent.getStringExtra(EXTRA_TRACK_ID)
+        }
     }
 
     companion object {
         const val ACTION_OPEN_SESSION = "app.nanotune.OPEN_SESSION"
+        const val ACTION_OPEN_TRACK = "app.nanotune.OPEN_TRACK"
+        const val EXTRA_TRACK_ID = "track_id"
     }
 }

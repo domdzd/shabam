@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.nanotune.BuildConfig
+import app.nanotune.domain.model.RecordingsPolicy
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -35,8 +36,18 @@ data class AppSettings(
     val enrichmentWifiOnly: Boolean = false,
     val serverUrl: String = BuildConfig.DEFAULT_API_BASE_URL,
     val syncEnabled: Boolean = true,
+    /** "Use my server's recognition engines" (main engine without ShazamKit, or fallback). */
     val enhancedEnabled: Boolean = false,
     val enhancedConsentAt: Long? = null,
+    /** Sorted, comma-separated engine ids the user agreed to; a new engine asks again. */
+    val enhancedConsentProviders: String = "",
+    /** Opt-in: keep recordings on this phone (see docs/PRIVACY.md). */
+    val saveRecordings: Boolean = false,
+    val recordingsConsentAt: Long? = null,
+    val recordingsPolicy: RecordingsPolicy = RecordingsPolicy.NOT_IDENTIFIED,
+    /** 0 = keep until deleted. */
+    val recordingsRetentionDays: Int = 30,
+    val retryRecordingsOnline: Boolean = true,
     val privacyNoticeSeen: Boolean = false,
     /** When a synchronised preference last changed (epoch ms); 0 = never. */
     val syncedSettingsUpdatedAt: Long = 0,
@@ -119,6 +130,12 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
             syncEnabled = this[SYNC_ENABLED] ?: defaults.syncEnabled,
             enhancedEnabled = this[ENHANCED_ENABLED] ?: defaults.enhancedEnabled,
             enhancedConsentAt = this[ENHANCED_CONSENT_AT],
+            enhancedConsentProviders = this[ENHANCED_CONSENT_PROVIDERS] ?: "",
+            saveRecordings = (this[SAVE_RECORDINGS] ?: false) && this[RECORDINGS_CONSENT_AT] != null,
+            recordingsConsentAt = this[RECORDINGS_CONSENT_AT],
+            recordingsPolicy = this[RECORDINGS_POLICY]?.let { runCatching { RecordingsPolicy.valueOf(it) }.getOrNull() } ?: defaults.recordingsPolicy,
+            recordingsRetentionDays = this[RECORDINGS_RETENTION_DAYS] ?: defaults.recordingsRetentionDays,
+            retryRecordingsOnline = this[RETRY_RECORDINGS_ONLINE] ?: defaults.retryRecordingsOnline,
             privacyNoticeSeen = this[PRIVACY_SEEN] ?: defaults.privacyNoticeSeen,
             syncedSettingsUpdatedAt = this[SYNCED_UPDATED_AT] ?: 0L,
         )
@@ -138,6 +155,13 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
         this[ENHANCED_ENABLED] = settings.enhancedEnabled
         val consent = settings.enhancedConsentAt
         if (consent == null) remove(ENHANCED_CONSENT_AT) else this[ENHANCED_CONSENT_AT] = consent
+        this[ENHANCED_CONSENT_PROVIDERS] = settings.enhancedConsentProviders
+        this[SAVE_RECORDINGS] = settings.saveRecordings
+        val recordingsConsent = settings.recordingsConsentAt
+        if (recordingsConsent == null) remove(RECORDINGS_CONSENT_AT) else this[RECORDINGS_CONSENT_AT] = recordingsConsent
+        this[RECORDINGS_POLICY] = settings.recordingsPolicy.name
+        this[RECORDINGS_RETENTION_DAYS] = settings.recordingsRetentionDays
+        this[RETRY_RECORDINGS_ONLINE] = settings.retryRecordingsOnline
         this[PRIVACY_SEEN] = settings.privacyNoticeSeen
         this[SYNCED_UPDATED_AT] = settings.syncedSettingsUpdatedAt
     }
@@ -155,6 +179,12 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
         val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
         val ENHANCED_ENABLED = booleanPreferencesKey("enhanced_enabled")
         val ENHANCED_CONSENT_AT = longPreferencesKey("enhanced_consent_at")
+        val ENHANCED_CONSENT_PROVIDERS = stringPreferencesKey("enhanced_consent_providers")
+        val SAVE_RECORDINGS = booleanPreferencesKey("save_recordings")
+        val RECORDINGS_CONSENT_AT = longPreferencesKey("recordings_consent_at")
+        val RECORDINGS_POLICY = stringPreferencesKey("recordings_policy")
+        val RECORDINGS_RETENTION_DAYS = intPreferencesKey("recordings_retention_days")
+        val RETRY_RECORDINGS_ONLINE = booleanPreferencesKey("retry_recordings_online")
         val PRIVACY_SEEN = booleanPreferencesKey("privacy_notice_seen")
         val SYNCED_UPDATED_AT = longPreferencesKey("synced_settings_updated_at")
     }

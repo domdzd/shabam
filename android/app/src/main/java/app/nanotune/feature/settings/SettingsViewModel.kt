@@ -5,9 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.nanotune.AppContainer
 import app.nanotune.data.remote.BackendClient
+import app.nanotune.data.remote.dto.ProviderInfoDto
 import app.nanotune.data.repository.ServerState
 import app.nanotune.data.settings.AccountSession
 import app.nanotune.data.settings.AppSettings
+import app.nanotune.domain.model.SavedClip
+import app.nanotune.recognition.EnhancedGate
+import app.nanotune.service.ClipRetryWorker
 import app.nanotune.service.SessionController
 import coil3.SingletonImageLoader
 import kotlinx.coroutines.Dispatchers
@@ -66,16 +70,46 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.serverRepository.refresh() }
     }
 
-    fun setEnhanced(enabled: Boolean) {
-        update { it.copy(enhancedEnabled = enabled, enhancedConsentAt = if (enabled) System.currentTimeMillis() else null) }
+    val clips: StateFlow<List<SavedClip>> = container.clipRepository.clips
+
+    /** Turns server engines on (after the user accepted the disclosure for [providers]) or off. */
+    fun setServerEngines(enabled: Boolean, providers: List<ProviderInfoDto> = emptyList()) {
+        update {
+            it.copy(
+                enhancedEnabled = enabled,
+                enhancedConsentAt = if (enabled) System.currentTimeMillis() else null,
+                enhancedConsentProviders = if (enabled) EnhancedGate.consentKey(providers) else "",
+            )
+        }
+    }
+
+    fun setSaveRecordings(enabled: Boolean) {
+        update {
+            it.copy(saveRecordings = enabled, recordingsConsentAt = if (enabled) System.currentTimeMillis() else it.recordingsConsentAt)
+        }
+        viewModelScope.launch { container.clipRepository.refresh() }
+    }
+
+    fun deleteAllRecordings(context: Context) {
+        viewModelScope.launch {
+            ClipRetryWorker.cancel(context)
+            container.clipRepository.deleteAll()
+            _message.value = "All recordings deleted."
+        }
+    }
+
+    fun applyRetention() {
+        viewModelScope.launch { container.clipRepository.applyRetention() }
     }
 
     /** Wipes history, favourites, settings, cached tokens and images from this phone. */
     fun deleteLocalData(context: Context) {
         viewModelScope.launch {
             SessionController.stop(context)
+            ClipRetryWorker.cancel(context)
             runCatching { container.accountRepository.logout() }
             container.historyRepository.deleteAllLocalData()
+            container.clipRepository.deleteAll()
             container.credentialStore.clearAll()
             container.settingsRepository.clear()
             container.resetInstallId()

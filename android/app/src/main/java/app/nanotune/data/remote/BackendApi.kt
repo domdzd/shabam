@@ -63,4 +63,13 @@ interface BackendApi {
     @Multipart
     @POST("recognition/enhanced")
     suspend fun enhanced(@Header("Authorization") authorization: String, @Part audio: MultipartBody.Part): Response<EnhancedResultDto>
+
+    /** Server engines; [authorization] is null for anonymous use (only if the server allows it). */
+    @Multipart
+    @POST("recognition/identify")
+    suspend fun identifyClip(
+        @Header("Authorization") authorization: String?,
+        @Header("X-NanoTune-Install") installId: String,
+        @Part audio: MultipartBody.Part,
+    ): Response<EnhancedResultDto>
 }

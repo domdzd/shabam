@@ -135,7 +135,9 @@ object Links {
 
     fun youTube(track: RecognizedTrack) = "https://www.youtube.com/results?search_query=${query(track)}"
 
-    fun spotify(track: RecognizedTrack) = "https://open.spotify.com/search/${query(track).replace("+", "%20")}"
+    /** Direct Spotify link when an engine supplied one, otherwise Spotify's search page. */
+    fun spotify(track: RecognizedTrack) = track.externalUrls[ExternalLink.SPOTIFY]
+        ?: "https://open.spotify.com/search/${query(track).replace("+", "%20")}"
 
     fun appleMusic(track: RecognizedTrack): String? = track.externalUrls[ExternalLink.APPLE_MUSIC]
 

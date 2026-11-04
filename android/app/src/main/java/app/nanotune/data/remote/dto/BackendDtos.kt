@@ -15,6 +15,18 @@ data class ServerConfigDto(
     val shazamkit: ShazamKitConfigDto = ShazamKitConfigDto(),
     val accounts: AccountsConfigDto = AccountsConfigDto(),
     val enhanced: EnhancedConfigDto = EnhancedConfigDto(),
+    /** Absent on 0.1.0 servers, which then simply offer no server engines. */
+    @SerialName("server_engines") val serverEngines: ServerEnginesConfigDto = ServerEnginesConfigDto(),
+)
+
+@Serializable
+data class ServerEnginesConfigDto(
+    val available: Boolean = false,
+    val anonymous: Boolean = false,
+    @SerialName("requires_account") val requiresAccount: Boolean = true,
+    @SerialName("max_upload_seconds") val maxUploadSeconds: Int = 12,
+    val providers: List<ProviderInfoDto> = emptyList(),
+    val message: String? = null,
 )
 
 @Serializable

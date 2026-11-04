@@ -32,11 +32,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -71,6 +73,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.nanotune.R
+import app.nanotune.data.remote.dto.ProviderInfoDto
 import app.nanotune.feature.common.Formats
 import app.nanotune.feature.common.InfoBanner
 import app.nanotune.feature.common.Links
@@ -87,11 +90,14 @@ fun HomeScreen(
     onOpenSession: () -> Unit,
     onOpenTrack: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRecordings: () -> Unit,
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
     val favourite by viewModel.resultFavourite.collectAsStateWithLifecycle()
     val engine by viewModel.engineStatus.collectAsStateWithLifecycle()
+    val serverProviders by viewModel.serverProviders.collectAsStateWithLifecycle()
+    val keepsRecordings by viewModel.keepsRecordings.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
 
     var showRationale by rememberSaveable { mutableStateOf(false) }
@@ -108,8 +114,8 @@ fun HomeScreen(
     val onTap: () -> Unit = {
         when {
             listening -> viewModel.cancel()
-            // If the engine can't run, explain what's missing without asking for the microphone.
-            engine != EngineStatus.READY && engine != EngineStatus.CHECKING -> viewModel.identify()
+            // If no engine can run, explain what's missing without asking for the microphone.
+            engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING -> viewModel.identify()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> viewModel.identify()
             else -> showRationale = true
         }
@@ -153,7 +159,7 @@ fun HomeScreen(
         )
         Spacer(Modifier.height(28.dp))
 
-        PhaseText(state.phase)
+        PhaseText(state.phase, keepsRecordings)
 
         Spacer(Modifier.height(24.dp))
         if (session.active) {
@@ -177,10 +183,13 @@ fun HomeScreen(
             label = "result",
         ) { result ->
             when (result) {
-                null -> if (engine != EngineStatus.READY && engine != EngineStatus.CHECKING && !listening) {
-                    EngineSetupBanner(engine, onOpenSettings)
-                } else {
-                    Spacer(Modifier.height(1.dp))
+                null -> when {
+                    listening -> Spacer(Modifier.height(1.dp))
+                    engine == EngineStatus.SERVER_CONSENT_NEEDED && serverProviders.isNotEmpty() ->
+                        ServerEnginesConsent(serverProviders, onAllow = { viewModel.grantServerEngines(serverProviders) })
+                    engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING ->
+                        EngineSetupBanner(engine, onOpenSettings)
+                    else -> Spacer(Modifier.height(1.dp))
                 }
                 is IdentifyResultUi.Matched -> TrackResultCard(
                     track = result.track,
@@ -196,7 +205,27 @@ fun HomeScreen(
                     action = { TextButton(onClick = onTap) { Text("Try again") } },
                 )
                 is IdentifyResultUi.Problem -> ProblemBanner(result, onRetry = onTap, onOpenSettings = onOpenSettings)
+                IdentifyResultUi.SavedForLater -> InfoBanner(
+                    icon = Icons.Filled.CloudQueue,
+                    title = "Saved for later",
+                    body = "You're offline, so NanoTune kept the recording. It will be identified automatically when you're back online, and you'll get a notification.",
+                    action = { TextButton(onClick = onOpenRecordings) { Text("View recordings") } },
+                )
+                is IdentifyResultUi.ConsentNeeded -> ServerEnginesConsent(result.providers, onAllow = { viewModel.grantServerEngines(result.providers) })
             }
+        }
+        when (state.clipNote) {
+            ClipNote.SAVED -> TextButton(onClick = onOpenRecordings) {
+                Icon(Icons.Filled.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Recording kept · View recordings")
+            }
+            ClipNote.PENDING -> TextButton(onClick = viewModel::keepRecording) {
+                Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Keep this recording")
+            }
+            null -> Unit
         }
         Spacer(Modifier.height(32.dp))
     }
@@ -247,13 +276,17 @@ private fun ListenButton(listening: Boolean, level: Float, onClick: () -> Unit) 
 }
 
 @Composable
-private fun PhaseText(phase: IdentifyPhase) {
+private fun PhaseText(phase: IdentifyPhase, keepsRecordings: Boolean) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         when (phase) {
             IdentifyPhase.Idle -> {
                 Text("Tap to identify", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Listens only while you're on this screen. Nothing is recorded or stored.",
+                    if (keepsRecordings) {
+                        "Listens only while you're on this screen. Recordings are kept on this phone (Settings › Recordings)."
+                    } else {
+                        "Listens only while you're on this screen. Nothing is recorded or stored."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -294,6 +327,8 @@ private fun PhaseText(phase: IdentifyPhase) {
 private fun EngineChip(status: EngineStatus, onClick: () -> Unit) {
     val label = when (status) {
         EngineStatus.READY -> "Engine ready"
+        EngineStatus.READY_SERVER -> "Server engine ready"
+        EngineStatus.SERVER_CONSENT_NEEDED -> "Server engine available"
         EngineStatus.CHECKING -> "Checking…"
         EngineStatus.NOT_BUNDLED -> "Engine not in this build"
         EngineStatus.NO_SERVER -> "Server not set"
@@ -345,6 +380,49 @@ private fun ProblemBanner(problem: IdentifyResultUi.Problem, onRetry: () -> Unit
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun ServerEnginesConsent(providers: List<ProviderInfoDto>, onAllow: () -> Unit) {
+    var showDialog by rememberSaveable { mutableStateOf(false) }
+    val names = providers.joinToString(" + ") { it.name }.ifEmpty { "recognition engines" }
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Send clips to $names?") },
+            text = {
+                Column {
+                    Text(
+                        "To identify a song, NanoTune will upload the clip it records (at most 12 s, 16 kHz mono) to your " +
+                            "NanoTune server, which forwards it to:",
+                    )
+                    providers.forEach { provider ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "• ${provider.name}" + (if (provider.paid) " (paid service, billed to the server owner)" else "") +
+                                (provider.disclosure?.let { " — $it" } ?: ""),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Clips aren't stored on the server. You can turn this off any time in Settings.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDialog = false
+                    onAllow()
+                }) { Text("Allow and identify") }
+            },
+            dismissButton = { TextButton(onClick = { showDialog = false }) { Text("Not now") } },
+        )
+    }
+    InfoBanner(
+        icon = Icons.Filled.Dns,
+        title = "Your server can identify songs",
+        body = "This build has no on-device engine, but your NanoTune server offers $names. That means uploading a short clip — you decide.",
+        action = { TextButton(onClick = { showDialog = true }) { Text("Review and allow") } },
     )
 }
 

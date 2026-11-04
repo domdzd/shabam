@@ -12,5 +12,6 @@
     <device-transfer>
         <exclude domain="file" path="datastore/credentials.preferences_pb" />
         <exclude domain="sharedpref" path="install.xml" />
+        <exclude domain="file" path="clips/" />
     </device-transfer>
 </data-extraction-rules>

@@ -157,7 +157,14 @@ private fun providerName(providerId: String?): String = when {
     providerId == null -> "the recognition engine"
     providerId == "shazamkit" -> "the Shazam catalogue (ShazamKit)"
     providerId.startsWith("enhanced:") -> providerId.removePrefix("enhanced:").replace(",", " + ") + " via your NanoTune server"
+    providerId.startsWith("server:") -> providerId.removePrefix("server:").split(",").joinToString(" + ") { engineName(it) } + " via your NanoTune server"
     else -> providerId
+}
+
+private fun engineName(id: String): String = when (id) {
+    "audd" -> "AudD"
+    "acrcloud" -> "ACRCloud"
+    else -> id
 }
 
 @Composable

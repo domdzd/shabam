@@ -55,9 +55,12 @@ import app.nanotune.data.repository.ServerState
 import app.nanotune.data.settings.AppSettings
 import app.nanotune.data.settings.SessionMode
 import app.nanotune.data.settings.ThemeMode
+import app.nanotune.domain.model.RecordingsPolicy
+import app.nanotune.recognition.EnhancedGate
 import app.nanotune.feature.common.SectionHeader
 import app.nanotune.feature.common.clickableRow
 import app.nanotune.recognition.shazamkit.ShazamKitBridge
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -75,6 +78,9 @@ fun SettingsScreen(
     val snackbar = remember { SnackbarHostState() }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var consentDialog by rememberSaveable { mutableStateOf(false) }
+    var recordingsConsent by rememberSaveable { mutableStateOf(false) }
+    var confirmDeleteRecordings by rememberSaveable { mutableStateOf(false) }
+    val clips by viewModel.clips.collectAsStateWithLifecycle()
 
     LaunchedEffect(message) {
         message?.let {
@@ -103,18 +109,18 @@ fun SettingsScreen(
         )
     }
 
-    val enhancedConfig = (server as? ServerState.Online)?.config?.enhanced
-    if (consentDialog && enhancedConfig != null) {
+    val engines = (server as? ServerState.Online)?.config?.serverEngines
+    if (consentDialog && engines != null && engines.providers.isNotEmpty()) {
         AlertDialog(
             onDismissRequest = { consentDialog = false },
-            title = { Text("Turn on enhanced recognition?") },
+            title = { Text("Use your server's recognition engines?") },
             text = {
                 Column {
                     Text(
-                        "When the Shazam catalogue finds no match, NanoTune will upload the clip it just heard " +
-                            "(at most ${enhancedConfig.maxUploadSeconds} s, 16 kHz mono) to your NanoTune server, which forwards it to:",
+                        "NanoTune will upload the clip it records (at most ${engines.maxUploadSeconds} s, 16 kHz mono) to your " +
+                            "NanoTune server, which forwards it to:",
                     )
-                    enhancedConfig.providers.forEach { provider ->
+                    engines.providers.forEach { provider ->
                         Spacer(Modifier.height(6.dp))
                         Text(
                             "• ${provider.name}" + (if (provider.paid) " (paid service, billed to the server owner)" else "") +
@@ -123,16 +129,57 @@ fun SettingsScreen(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Results show which engine found them. Engines can disagree; NanoTune shows that too.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Used when this build has no on-device engine, when you tap Identify on a saved recording, and — if " +
+                            "you're signed in — as a fallback when Shazam finds nothing. Results name the engine that found them.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     consentDialog = false
-                    viewModel.setEnhanced(true)
+                    viewModel.setServerEngines(true, engines.providers)
                 }) { Text("I agree, turn on") }
             },
             dismissButton = { TextButton(onClick = { consentDialog = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (recordingsConsent) {
+        AlertDialog(
+            onDismissRequest = { recordingsConsent = false },
+            title = { Text("Keep recordings on this phone?") },
+            text = {
+                Text(
+                    "NanoTune will save the audio it records when identifying (up to ${settings.manualListenSeconds} s each) in its private " +
+                        "storage on this phone, so you can play it, share it, or identify it later. Recordings can contain " +
+                        "conversations or other sounds near you. They're never uploaded unless you tap Share or Identify with your " +
+                        "server's engines, aren't backed up, and are deleted automatically after the period you choose.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    recordingsConsent = false
+                    viewModel.setSaveRecordings(true)
+                }) { Text("Keep recordings") }
+            },
+            dismissButton = { TextButton(onClick = { recordingsConsent = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (confirmDeleteRecordings) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteRecordings = false },
+            title = { Text("Delete all recordings?") },
+            text = { Text("All saved audio is removed from this phone. Songs already identified stay in your history.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteRecordings = false
+                    viewModel.deleteAllRecordings(context)
+                }) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteRecordings = false }) { Text("Cancel") } },
         )
     }
 
@@ -209,6 +256,58 @@ fun SettingsScreen(
                 onChange = { value -> viewModel.update { it.copy(sessionsOnMobileData = value) } },
             )
 
+            SectionHeader("Recordings")
+            SwitchRow(
+                title = "Keep recordings",
+                subtitle = if (settings.saveRecordings) {
+                    "On · audio is saved on this phone only, so you can play, share or identify it later."
+                } else {
+                    "Off · audio is discarded right after identification (default)."
+                },
+                checked = settings.saveRecordings,
+                onChange = { on -> if (on) recordingsConsent = true else viewModel.setSaveRecordings(false) },
+            )
+            if (settings.saveRecordings) {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    Text("Keep", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(4.dp))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        val options = listOf(RecordingsPolicy.NOT_IDENTIFIED to "Not identified", RecordingsPolicy.ALL to "Every recording")
+                        options.forEachIndexed { index, (policy, label) ->
+                            SegmentedButton(
+                                selected = settings.recordingsPolicy == policy,
+                                onClick = { viewModel.update { it.copy(recordingsPolicy = policy) } },
+                                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                            ) { Text(label) }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Delete automatically after", style = MaterialTheme.typography.labelLarge)
+                    ChipRow(
+                        options = listOf(7 to "7 days", 30 to "30 days", 90 to "90 days", 0 to "Never"),
+                        selected = settings.recordingsRetentionDays,
+                        onSelect = { days ->
+                            viewModel.update { it.copy(recordingsRetentionDays = days) }
+                            viewModel.applyRetention()
+                        },
+                    )
+                }
+                SwitchRow(
+                    title = "Identify automatically when back online",
+                    subtitle = "If you're offline when you tap Identify, keep the recording and identify it later (you'll get a notification).",
+                    checked = settings.retryRecordingsOnline,
+                    onChange = { value -> viewModel.update { it.copy(retryRecordingsOnline = value) } },
+                )
+            }
+            if (clips.isNotEmpty()) {
+                val totalMb = clips.sumOf { it.sizeBytes } / (1024.0 * 1024.0)
+                ListItem(
+                    headlineContent = { Text("Recordings on this phone") },
+                    supportingContent = { Text("${clips.size} · ${String.format(Locale.ROOT, "%.1f", totalMb)} MB · see History › Recordings") },
+                    trailingContent = { TextButton(onClick = { confirmDeleteRecordings = true }) { Text("Delete all") } },
+                )
+            }
+
             SectionHeader("Metadata & artwork")
             SwitchRow(
                 title = "Look up album and release date",
@@ -241,12 +340,12 @@ fun SettingsScreen(
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
                 modifier = Modifier.clickableRow(onOpenAccount),
             )
-            EnhancedRow(
+            ServerEnginesRow(
                 server = server,
                 signedIn = account != null,
-                enabled = settings.enhancedEnabled && settings.enhancedConsentAt != null,
+                settings = settings,
                 onEnable = { consentDialog = true },
-                onDisable = { viewModel.setEnhanced(false) },
+                onDisable = { viewModel.setServerEngines(false) },
             )
 
             SectionHeader("Privacy")
@@ -362,21 +461,25 @@ private fun serverSummary(server: ServerState): String = when (server) {
 }
 
 @Composable
-private fun EnhancedRow(server: ServerState, signedIn: Boolean, enabled: Boolean, onEnable: () -> Unit, onDisable: () -> Unit) {
-    val config = (server as? ServerState.Online)?.config
-    val available = config?.enhanced?.available == true
+private fun ServerEnginesRow(server: ServerState, signedIn: Boolean, settings: AppSettings, onEnable: () -> Unit, onDisable: () -> Unit) {
+    val engines = (server as? ServerState.Online)?.config?.serverEngines
+    val names = engines?.providers?.joinToString(" + ") { it.name }.orEmpty()
+    val usable = engines != null && engines.available && engines.providers.isNotEmpty() && (engines.anonymous || signedIn)
+    val consented = settings.enhancedEnabled && settings.enhancedConsentAt != null &&
+        settings.enhancedConsentProviders == EnhancedGate.consentKey(engines?.providers.orEmpty())
     val subtitle = when {
-        config == null -> "Needs a reachable NanoTune server."
-        !available -> config.enhanced.message ?: "Additional recognition engines are not configured on this server, so recognition is standard."
-        !signedIn -> "Available on your server for signed-in users (${config.enhanced.providers.joinToString { it.name }})."
-        enabled -> "On · falls back to ${config.enhanced.providers.joinToString { it.name }} when Shazam finds nothing. Uploads a short clip."
-        else -> "Off · would use ${config.enhanced.providers.joinToString { it.name }}. Requires uploading a short clip."
+        engines == null -> "Needs a reachable NanoTune server."
+        !engines.available || engines.providers.isEmpty() -> engines.message ?: "No recognition engines are configured on this server."
+        !engines.anonymous && !signedIn -> "Your server offers $names for signed-in users."
+        consented -> "On · $names. Uploads a short clip only when needed."
+        settings.enhancedEnabled -> "Your server's engines changed ($names) — turn on again to review."
+        else -> "Off · your server offers $names. Requires uploading a short clip."
     }
     SwitchRow(
-        title = "Enhanced recognition",
+        title = "Use my server's recognition engines",
         subtitle = subtitle,
-        checked = enabled && available && signedIn,
-        enabled = available && signedIn,
+        checked = usable && consented,
+        enabled = usable,
         onChange = { on -> if (on) onEnable() else onDisable() },
     )
 }

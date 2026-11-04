@@ -93,6 +93,8 @@ class HistoryRepository(
         mode: RecognitionMode,
         sessionId: String?,
         confidence: Float?,
+        /** When the music was heard, if earlier than now (e.g. a saved recording identified later). */
+        recognizedAt: Long? = null,
     ): SavedRecognition = db.withTransaction {
         val now = clock()
         val (trackId, isNew) = upsertTrack(track, now)
@@ -101,7 +103,7 @@ class HistoryRepository(
             RecognitionEntity(
                 id = recognitionId,
                 trackId = trackId,
-                recognizedAt = now,
+                recognizedAt = recognizedAt ?: now,
                 providerId = providerId,
                 sessionId = sessionId,
                 matchConfidence = confidence,

@@ -36,6 +36,7 @@ import app.nanotune.feature.history.HistoryViewModel
 import app.nanotune.feature.home.HomeScreen
 import app.nanotune.feature.home.HomeViewModel
 import app.nanotune.feature.listening.SessionScreen
+import app.nanotune.feature.recordings.RecordingsViewModel
 import app.nanotune.feature.listening.SessionViewModel
 import app.nanotune.feature.settings.LicensesScreen
 import app.nanotune.feature.settings.PrivacyScreen
@@ -46,7 +47,7 @@ import app.nanotune.feature.trackdetails.TrackDetailsViewModel
 import kotlinx.serialization.Serializable
 
 @Serializable object HomeRoute
-@Serializable object HistoryRoute
+@Serializable data class HistoryRoute(val tab: Int = 0)
 @Serializable object SettingsRoute
 @Serializable object SessionRoute
 @Serializable object AccountRoute
@@ -58,7 +59,7 @@ private class TopLevel(val route: Any, val label: String, val icon: ImageVector,
 
 private val topLevels = listOf(
     TopLevel(HomeRoute, "Identify", Icons.Filled.Mic) { it.hasRoute<HomeRoute>() },
-    TopLevel(HistoryRoute, "History", Icons.Filled.History) { it.hasRoute<HistoryRoute>() },
+    TopLevel(HistoryRoute(), "History", Icons.Filled.History) { it.hasRoute<HistoryRoute>() },
     TopLevel(SettingsRoute, "Settings", Icons.Filled.Settings) { it.hasRoute<SettingsRoute>() },
 )
 
@@ -100,12 +101,16 @@ fun NanoTuneNavHost(container: AppContainer, navController: NavHostController) {
                         onOpenSession = { navController.navigate(SessionRoute) },
                         onOpenTrack = { navController.navigate(TrackRoute(it)) },
                         onOpenSettings = { navController.navigate(SettingsRoute) { launchSingleTop = true } },
+                        onOpenRecordings = { navController.navigate(HistoryRoute(tab = 1)) { launchSingleTop = true } },
                     )
                 }
-                composable<HistoryRoute> {
+                composable<HistoryRoute> { entry ->
                     HistoryScreen(
                         viewModel = viewModel { HistoryViewModel(container) },
+                        recordings = viewModel { RecordingsViewModel(container) },
+                        initialTab = entry.toRoute<HistoryRoute>().tab,
                         onOpenTrack = { navController.navigate(TrackRoute(it)) },
+                        onOpenSettings = { navController.navigate(SettingsRoute) { launchSingleTop = true } },
                     )
                 }
                 composable<SettingsRoute> {

@@ -1,6 +1,7 @@
 package app.nanotune
 
 import android.app.Application
+import app.nanotune.service.ClipRetryWorker
 import kotlinx.coroutines.launch
 
 class NanoTuneApp : Application() {
@@ -17,6 +18,9 @@ class NanoTuneApp : Application() {
                 container.historyRepository.closeDanglingSessions()
             }
             container.serverRepository.refresh()
+            // Apply the retention period and pick up recordings still waiting to be identified.
+            container.clipRepository.applyRetention()
+            if (container.clipRepository.pendingRetries().isNotEmpty()) ClipRetryWorker.schedule(this@NanoTuneApp)
             container.syncRepository.syncNow()
         }
     }

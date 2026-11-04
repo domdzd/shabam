@@ -39,12 +39,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,11 +64,22 @@ import app.nanotune.domain.model.HistoryEntry
 import app.nanotune.feature.common.Artwork
 import app.nanotune.feature.common.FavouriteButton
 import app.nanotune.feature.common.Formats
+import app.nanotune.feature.recordings.RecordingsTab
+import app.nanotune.feature.recordings.RecordingsViewModel
 import java.time.LocalDate
 
 @Composable
-fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrack: (String) -> Unit) {
+fun HistoryScreen(
+    viewModel: HistoryViewModel,
+    recordings: RecordingsViewModel,
+    initialTab: Int,
+    onOpenTrack: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+) {
     val context = LocalContext.current
+    var tab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
+    val clips by recordings.clips.collectAsStateWithLifecycle()
+    val recordingsMessage by recordings.message.collectAsStateWithLifecycle()
     val rows by viewModel.rows.collectAsStateWithLifecycle()
     val filters by viewModel.filters.collectAsStateWithLifecycle()
     val total by viewModel.totalCount.collectAsStateWithLifecycle()
@@ -85,6 +99,12 @@ fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrack: (String) -> Unit) {
         message?.let {
             snackbar.showSnackbar(it)
             viewModel.consumeMessage()
+        }
+    }
+    LaunchedEffect(recordingsMessage) {
+        recordingsMessage?.let {
+            snackbar.showSnackbar(it)
+            recordings.consumeMessage()
         }
     }
 
@@ -109,7 +129,7 @@ fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrack: (String) -> Unit) {
             TopAppBar(
                 title = { Text("History") },
                 actions = {
-                    Box {
+                    if (tab == 0) Box {
                         IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
@@ -146,6 +166,19 @@ fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrack: (String) -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            TabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
+                Tab(
+                    selected = tab == 1,
+                    onClick = { tab = 1 },
+                    text = { Text(if (clips.isEmpty()) "Recordings" else "Recordings (${clips.size})") },
+                )
+            }
+            if (tab == 1) {
+                RecordingsTab(recordings, onOpenTrack = onOpenTrack, onOpenSettings = onOpenSettings)
+                return@Column
+            }
+            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = filters.query,
                 onValueChange = viewModel::setQuery,

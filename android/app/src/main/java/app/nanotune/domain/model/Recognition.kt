@@ -40,6 +40,8 @@ object ExternalLink {
     const val APPLE_MUSIC = "apple_music"
     const val SHAZAM_WEB = "shazam_web"
     const val VIDEO = "video"
+    const val SPOTIFY = "spotify"
+    const val SONG_LINK = "song_link"
     const val MUSICBRAINZ_RECORDING = "musicbrainz_recording"
 }
 

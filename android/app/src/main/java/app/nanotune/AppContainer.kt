@@ -5,6 +5,8 @@ import android.content.Context
 import androidx.core.content.edit
 import app.nanotune.core.audio.AudioCapture
 import app.nanotune.core.network.Connectivity
+import app.nanotune.data.clips.ClipRepository
+import app.nanotune.data.clips.ClipStore
 import app.nanotune.data.local.NanoTuneDatabase
 import app.nanotune.data.remote.BackendClient
 import app.nanotune.data.remote.MusicBrainzClient
@@ -14,6 +16,7 @@ import app.nanotune.data.repository.ServerRepository
 import app.nanotune.data.repository.SyncRepository
 import app.nanotune.data.settings.CredentialStore
 import app.nanotune.data.settings.SettingsRepository
+import app.nanotune.recognition.ClipRecognizer
 import app.nanotune.recognition.EnhancedGate
 import app.nanotune.recognition.MetadataEnricher
 import app.nanotune.recognition.RecognitionEngine
@@ -21,12 +24,14 @@ import app.nanotune.recognition.StreamingRecognitionProvider
 import app.nanotune.recognition.enhanced.EnhancedRecognitionClient
 import app.nanotune.recognition.shazamkit.ShazamKitBridge
 import app.nanotune.recognition.shazamkit.ShazamTokenSource
+import app.nanotune.service.ClipRetryWorker
 import app.nanotune.service.SessionStateHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -90,17 +95,33 @@ class AppContainer(private val app: Application) {
 
     val enhancedGate = EnhancedGate(serverRepository, settingsRepository, credentialStore)
 
+    val enhancedClient = EnhancedRecognitionClient(backendClient, accountRepository, credentialStore, installId = { installId() })
+
+    /** Opt-in saved recordings, in app-private storage (never backed up). */
+    val clipRepository: ClipRepository by lazy {
+        ClipRepository(
+            ClipStore(File(app.filesDir, "clips"), json),
+            settingsRepository,
+            onRetryNeeded = { ClipRetryWorker.schedule(app) },
+        )
+    }
+
+    val clipRecognizer: ClipRecognizer by lazy {
+        ClipRecognizer(primaryProvider, enhancedClient, enhancedGate, clipRepository, historyRepository, metadataEnricher, syncRepository)
+    }
+
     val recognitionEngine: RecognitionEngine by lazy {
         RecognitionEngine(
             primary = primaryProvider,
             tokenSource = tokenSource,
-            enhanced = EnhancedRecognitionClient(accountRepository),
+            enhanced = enhancedClient,
             enhancedGate = enhancedGate,
             audio = audioCapture,
             settings = settingsRepository,
             history = historyRepository,
             enricher = metadataEnricher,
             sync = syncRepository,
+            clips = clipRepository,
         )
     }
 
