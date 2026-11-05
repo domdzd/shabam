@@ -111,13 +111,14 @@ fun HomeScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshServer() }
 
     val listening = state.phase !is IdentifyPhase.Idle
+    val engineReady = engine == EngineStatus.READY || engine == EngineStatus.READY_SERVER || engine == EngineStatus.CHECKING
     val onTap: () -> Unit = {
         when {
+            // While recording a clip that is kept, a tap ends it early and keeps it.
+            state.phase is IdentifyPhase.Listening && keepsRecordings -> viewModel.stopEarly()
             listening -> viewModel.cancel()
-            // If no engine can run, explain what's missing without asking for the microphone — unless the
-            // recording can be kept and identified once the server is reachable again.
-            engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING &&
-                !(engine == EngineStatus.SERVER_OFFLINE && keepsRecordings) -> viewModel.identify()
+            // Without "Keep recordings" and without an engine, explain what's missing instead of recording.
+            !keepsRecordings && !engineReady -> viewModel.identify()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> viewModel.identify()
             else -> showRationale = true
         }
@@ -129,6 +130,7 @@ fun HomeScreen(
             !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
         MicrophoneRationaleDialog(
             permanentlyDenied = permanentlyDenied,
+            keepsRecordings = keepsRecordings,
             onContinue = {
                 showRationale = false
                 if (permanentlyDenied) Links.openAppSettings(context) else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -189,8 +191,7 @@ fun HomeScreen(
                     listening -> Spacer(Modifier.height(1.dp))
                     engine == EngineStatus.SERVER_CONSENT_NEEDED && serverProviders.isNotEmpty() ->
                         ServerEnginesConsent(serverProviders, onAllow = { viewModel.grantServerEngines(serverProviders) })
-                    engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING ->
-                        EngineSetupBanner(engine, onOpenSettings)
+                    !engineReady -> EngineSetupBanner(engine, keepsRecordings, onOpenSettings)
                     else -> Spacer(Modifier.height(1.dp))
                 }
                 is IdentifyResultUi.Matched -> TrackResultCard(
@@ -207,12 +208,28 @@ fun HomeScreen(
                     action = { TextButton(onClick = onTap) { Text("Try again") } },
                 )
                 is IdentifyResultUi.Problem -> ProblemBanner(result, onRetry = onTap, onOpenSettings = onOpenSettings)
-                IdentifyResultUi.SavedForLater -> InfoBanner(
-                    icon = Icons.Filled.CloudQueue,
-                    title = "Saved for later",
-                    body = "You're offline, so NanoTune kept the recording. It will be identified automatically when you're back online, and you'll get a notification.",
-                    action = { TextButton(onClick = onOpenRecordings) { Text("View recordings") } },
-                )
+                is IdentifyResultUi.Saved -> Column {
+                    InfoBanner(
+                        icon = if (result.autoRetry) Icons.Filled.CloudQueue else Icons.Filled.Save,
+                        title = "Recording saved",
+                        body = "It couldn't be identified right now: ${result.reason}\n\n" +
+                            if (result.autoRetry) {
+                                "NanoTune will identify it automatically when you're back online and send a notification."
+                            } else {
+                                "It's in History › Recordings, where you can play, share or identify it once an engine is available."
+                            },
+                        action = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = onOpenRecordings) { Text("View recordings") }
+                                if (result.hint != null) TextButton(onClick = onOpenSettings) { Text("Settings") }
+                            }
+                        },
+                    )
+                    if (result.consentProviders.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        ServerEnginesConsent(result.consentProviders, onAllow = { viewModel.grantServerEngines(result.consentProviders) })
+                    }
+                }
                 is IdentifyResultUi.ConsentNeeded -> ServerEnginesConsent(result.providers, onAllow = { viewModel.grantServerEngines(result.providers) })
             }
         }
@@ -264,7 +281,7 @@ private fun ListenButton(listening: Boolean, level: Float, onClick: () -> Unit) 
             shadowElevation = 8.dp,
             modifier = Modifier
                 .size(176.dp)
-                .semantics { contentDescription = if (listening) "Stop listening" else "Tap to identify" },
+                .semantics { contentDescription = if (listening) "Stop" else "Tap to identify" },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
@@ -285,7 +302,7 @@ private fun PhaseText(phase: IdentifyPhase, keepsRecordings: Boolean) {
                 Text("Tap to identify", style = MaterialTheme.typography.titleLarge)
                 Text(
                     if (keepsRecordings) {
-                        "Listens only while you're on this screen. Recordings are kept on this phone (Settings › Recordings)."
+                        "Records only while you're on this screen. Each recording is kept on this phone (History › Recordings)."
                     } else {
                         "Listens only while you're on this screen. Nothing is recorded or stored."
                     },
@@ -301,13 +318,29 @@ private fun PhaseText(phase: IdentifyPhase, keepsRecordings: Boolean) {
                         Canvas(Modifier.fillMaxSize()) { drawCircle(Brand.Live) }
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text("Listening · ${Formats.duration(phase.elapsedMs)}", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        (if (phase.recordOnly) "Recording · " else "Listening · ") + Formats.duration(phase.elapsedMs),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(
                     progress = { (phase.elapsedMs.toFloat() / phase.maxMs).coerceIn(0f, 1f) },
                     modifier = Modifier.width(200.dp),
                 )
+                if (phase.recordOnly || keepsRecordings) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (phase.recordOnly) {
+                            "No engine can identify it right now. The recording will be saved. Tap to stop early."
+                        } else {
+                            "Tap to stop early and keep the recording."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
                 if (phase.micSilenced) {
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -341,7 +374,7 @@ private fun EngineChip(status: EngineStatus, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EngineSetupBanner(status: EngineStatus, onOpenSettings: () -> Unit) {
+private fun EngineSetupBanner(status: EngineStatus, keepsRecordings: Boolean, onOpenSettings: () -> Unit) {
     val (title, body) = when (status) {
         EngineStatus.NOT_BUNDLED -> "Recognition engine not included" to
             "This APK was built without Apple's ShazamKit library, which Apple only distributes to signed-in developers. " +
@@ -350,8 +383,7 @@ private fun EngineSetupBanner(status: EngineStatus, onOpenSettings: () -> Unit) 
         EngineStatus.NO_SERVER -> "Connect your NanoTune server" to
             "ShazamKit needs a short-lived developer token that your own NanoTune server signs. Add the server address in Settings."
         EngineStatus.SERVER_OFFLINE -> "Server unreachable" to
-            "NanoTune can't reach your server right now, so it can't identify songs. Check your connection or the server. " +
-            "With Settings › Recordings on, a tap keeps the clip and identifies it once you're back online."
+            "NanoTune can't reach your server right now, so it can't identify songs. Check your connection or the server."
         EngineStatus.SERVER_NOT_CONFIGURED -> "Server has no Apple key yet" to
             "Your NanoTune server is running but has no Apple Media Services key configured, so it can't sign ShazamKit tokens."
         else -> return
@@ -359,7 +391,7 @@ private fun EngineSetupBanner(status: EngineStatus, onOpenSettings: () -> Unit) 
     InfoBanner(
         icon = if (status == EngineStatus.SERVER_OFFLINE) Icons.Filled.CloudOff else Icons.Filled.Dns,
         title = title,
-        body = body,
+        body = if (keepsRecordings) "$body\n\nYou can still tap the button: NanoTune records and saves the song so you can identify it later." else body,
         action = { TextButton(onClick = onOpenSettings) { Text("Open settings") } },
     )
 }
@@ -450,7 +482,7 @@ private fun SessionRunningCard(tracks: Int, paused: Boolean, onOpen: () -> Unit)
 }
 
 @Composable
-private fun MicrophoneRationaleDialog(permanentlyDenied: Boolean, onContinue: () -> Unit, onDismiss: () -> Unit) {
+private fun MicrophoneRationaleDialog(permanentlyDenied: Boolean, keepsRecordings: Boolean, onContinue: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Filled.Mic, contentDescription = null) },
@@ -458,8 +490,16 @@ private fun MicrophoneRationaleDialog(permanentlyDenied: Boolean, onContinue: ()
         text = {
             Text(
                 "NanoTune uses the microphone only to identify music: while you tap Identify, or while a listening " +
-                    "session you started shows its notification. Audio is processed in memory and never saved or uploaded" +
-                    " by default." + if (permanentlyDenied) "\n\nMicrophone access is turned off for NanoTune. Enable it in the app's system settings." else "",
+                    "session you started shows its notification. " +
+                    (
+                        if (keepsRecordings) {
+                            "What a tap records is saved on this phone, so you can play, share or identify it later " +
+                                "(History › Recordings; turn this off in Settings › Recordings)."
+                        } else {
+                            "Audio is processed in memory and not saved."
+                        }
+                        ) +
+                    if (permanentlyDenied) "\n\nMicrophone access is turned off for NanoTune. Enable it in the app's system settings." else "",
             )
         },
         confirmButton = { TextButton(onClick = onContinue) { Text(if (permanentlyDenied) "Open settings" else "Continue") } },

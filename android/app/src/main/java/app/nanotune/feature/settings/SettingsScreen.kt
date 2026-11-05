@@ -152,10 +152,11 @@ fun SettingsScreen(
             title = { Text("Keep recordings on this phone?") },
             text = {
                 Text(
-                    "NanoTune will save the audio it records when identifying (up to ${settings.manualListenSeconds} s each) in its private " +
-                        "storage on this phone, so you can play it, share it, or identify it later. Recordings can contain " +
-                        "conversations or other sounds near you. They're never uploaded unless you tap Share or Identify with your " +
-                        "server's engines, aren't backed up, and are deleted automatically after the period you choose.",
+                    "NanoTune will save what the Identify button records (up to ${settings.manualListenSeconds} s each), encrypted in its " +
+                        "private storage on this phone, so you can play it, share it, or identify it later — even when no engine " +
+                        "could identify it at the time. Recordings can contain conversations or other sounds near you. They're " +
+                        "never uploaded unless you tap Share or Identify with your server's engines, aren't backed up, and are " +
+                        "deleted automatically after the period you choose.",
                 )
             },
             confirmButton = {
@@ -260,9 +261,10 @@ fun SettingsScreen(
             SwitchRow(
                 title = "Keep recordings",
                 subtitle = if (settings.saveRecordings) {
-                    "On · audio is saved on this phone only, so you can play, share or identify it later."
+                    "On (default) · every tap of the Identify button is recorded and kept on this phone, encrypted, even when " +
+                        "no engine can identify it. Manage them in History › Recordings."
                 } else {
-                    "Off · audio is discarded right after identification (default)."
+                    "Off · audio is discarded right after identification, and nothing is recorded when no engine is available."
                 },
                 checked = settings.saveRecordings,
                 onChange = { on -> if (on) recordingsConsent = true else viewModel.setSaveRecordings(false) },
@@ -272,7 +274,7 @@ fun SettingsScreen(
                     Text("Keep", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(4.dp))
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        val options = listOf(RecordingsPolicy.NOT_IDENTIFIED to "Not identified", RecordingsPolicy.ALL to "Every recording")
+                        val options = listOf(RecordingsPolicy.ALL to "Every recording", RecordingsPolicy.NOT_IDENTIFIED to "Only not identified")
                         options.forEachIndexed { index, (policy, label) ->
                             SegmentedButton(
                                 selected = settings.recordingsPolicy == policy,

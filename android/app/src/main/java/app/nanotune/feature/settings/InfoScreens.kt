@@ -57,15 +57,16 @@ fun PrivacyScreen(onBack: () -> Unit) = TextPage(
             "listening session keeps the microphone on only after you start it, and only while its notification is " +
             "visible. Sessions never start by themselves or after a reboot.",
         "Audio" to
-            "By default, raw audio is processed in memory and discarded immediately; it is never saved to storage. " +
             "With the standard engine (Apple ShazamKit) the phone turns the audio into a compact, non-reversible " +
-            "signature and only that signature is sent to Apple's Shazam service; the audio itself never leaves the phone.",
-        "Saved recordings (off by default)" to
-            "Only if you turn on Settings › Recordings › Keep recordings: the audio of identifications (only the ones " +
-            "that weren't identified, unless you choose every recording) is stored as files in NanoTune's private " +
-            "storage on this phone, so you can play, share or identify it later. Recordings may contain conversations or " +
-            "other nearby sounds. They are not backed up or synced, are deleted after the period you choose (7/30/90 days " +
-            "or never), and leave the phone only when you tap Share or identify one with your server's engines.",
+            "signature and only that signature is sent to Apple's Shazam service; the audio itself never leaves the phone. " +
+            "Listening sessions never store audio.",
+        "Saved recordings (on by default)" to
+            "What the Identify button records is kept on this phone so you can play, share, trim or identify it later — " +
+            "even when no engine could identify it at the time. Choose in Settings › Recordings whether to keep every " +
+            "recording or only those that weren't identified, or turn it off. Recordings are encrypted in NanoTune's " +
+            "private storage, may contain conversations or other nearby sounds, are not backed up or synced, are deleted " +
+            "after the period you choose (7/30/90 days or never), and leave the phone only when you tap Share or Save to " +
+            "device, or identify one with your server's engines. Imported files are handled the same way.",
         "Internet" to
             "ShazamKit needs an internet connection to search the Shazam catalogue. Your NanoTune server provides " +
             "short-lived developer tokens for this and never receives audio from the standard engine.",
@@ -84,7 +85,7 @@ fun PrivacyScreen(onBack: () -> Unit) = TextPage(
         "Deletion" to
             "Settings › Delete local data erases everything on this phone, including saved recordings. Account › Delete " +
             "account removes your account and all cloud data from the server. Single songs and recordings can be deleted " +
-            "from History.",
+            "from History (long-press recordings to delete several).",
         "No tracking" to
             "NanoTune contains no advertising, analytics or crash-reporting SDKs. Anonymous requests (tokens, and server " +
             "engines if your server allows them) carry a random per-install ID so the server can rate-limit fairly. The " +

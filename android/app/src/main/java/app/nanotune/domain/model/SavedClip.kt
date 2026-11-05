@@ -12,7 +12,19 @@ class CapturedClip(
 }
 
 /** Why a recording was kept. */
-enum class ClipReason { NO_MATCH, OFFLINE, ERROR, MATCHED, MANUAL }
+enum class ClipReason {
+    NO_MATCH,
+    OFFLINE,
+    ERROR,
+    MATCHED,
+    MANUAL,
+
+    /** Recorded although no engine could identify it at that moment (none in this build, no server...). */
+    NO_ENGINE,
+
+    /** Imported from an audio file chosen by the user. */
+    IMPORTED,
+}
 
 enum class ClipStatus { UNIDENTIFIED, IDENTIFIED }
 
@@ -24,7 +36,7 @@ data class ClipAttempt(
     val outcome: String,
 )
 
-/** A recording the user chose to keep (opt-in), stored only on this phone. */
+/** A recording kept on this phone (Settings › Recordings), never synced. */
 data class SavedClip(
     val id: String,
     val createdAt: Long,
@@ -40,7 +52,13 @@ data class SavedClip(
     val attempts: List<ClipAttempt> = emptyList(),
     /** Retry automatically when the phone is back online (offline captures). */
     val retryWhenOnline: Boolean = false,
-)
+    /** Name given by the user (or the imported file's name). */
+    val label: String? = null,
+) {
+    /** What to show as the recording's name. */
+    val displayName: String?
+        get() = label?.takeIf { it.isNotBlank() } ?: title?.let { t -> artist?.let { "$t — $it" } ?: t }
+}
 
 /** Which identifications keep their recording when "Keep recordings" is on. */
 enum class RecordingsPolicy { NOT_IDENTIFIED, ALL }

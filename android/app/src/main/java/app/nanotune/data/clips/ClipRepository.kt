@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /** Observable access to saved recordings; all file work happens off the main thread. */
 class ClipRepository(
@@ -36,7 +35,7 @@ class ClipRepository(
         trackId: String? = null,
         title: String? = null,
         artist: String? = null,
-        firstAttempt: ClipAttempt? = null,
+        label: String? = null,
     ): SavedClip? = withContext(Dispatchers.IO) {
         if (clip.durationMs < ClipPolicy.MIN_DURATION_MS) return@withContext null
         val pcm = Pcm.resample(clip.pcm, clip.length, clip.sampleRateHz, ClipPolicy.STORAGE_SAMPLE_RATE)
@@ -52,15 +51,14 @@ class ClipRepository(
                 trackId = trackId,
                 title = title,
                 artist = artist,
+                label = label,
             )
         } finally {
             pcm.fill(0)
         }
-        val withAttempt = if (firstAttempt != null) store.update(saved.id) { it.copy(attempts = listOf(firstAttempt)) } ?: saved else saved
         applyRetention()
-        _clips.value = store.list()
         if (retryWhenOnline) onRetryNeeded()
-        withAttempt
+        store.get(saved.id) ?: saved
     }
 
     suspend fun recordAttempt(id: String, attempt: ClipAttempt, identified: Identified?): SavedClip? = withContext(Dispatchers.IO) {
@@ -68,6 +66,7 @@ class ClipRepository(
             clip.copy(
                 attempts = (clip.attempts + attempt).takeLast(MAX_ATTEMPTS),
                 status = if (identified != null) ClipStatus.IDENTIFIED else clip.status,
+                reason = if (identified != null && clip.reason != ClipReason.IMPORTED) ClipReason.MATCHED else clip.reason,
                 recognitionId = identified?.recognitionId ?: clip.recognitionId,
                 trackId = identified?.trackId ?: clip.trackId,
                 title = identified?.title ?: clip.title,
@@ -79,14 +78,45 @@ class ClipRepository(
         updated
     }
 
-    suspend fun stopRetrying(id: String) = withContext(Dispatchers.IO) {
-        store.update(id) { it.copy(retryWhenOnline = false) }
+    suspend fun setRetry(id: String, retry: Boolean) {
+        withContext(Dispatchers.IO) {
+            store.update(id) { it.copy(retryWhenOnline = retry && it.status == ClipStatus.UNIDENTIFIED) }
+            _clips.value = store.list()
+        }
+        if (retry) onRetryNeeded()
+    }
+
+    suspend fun stopRetrying(id: String) = setRetry(id, false)
+
+    suspend fun rename(id: String, label: String?) = withContext(Dispatchers.IO) {
+        store.update(id) { it.copy(label = label) }
         _clips.value = store.list()
+    }
+
+    /** Keeps only [startMs] until [endMs] of the recording. Returns null if the result is too short. */
+    suspend fun trim(id: String, startMs: Long, endMs: Long): SavedClip? = withContext(Dispatchers.IO) {
+        val (pcm, rate) = store.readPcm(id) ?: return@withContext null
+        try {
+            val from = Pcm.offsetOf(startMs, rate, pcm.size)
+            val to = Pcm.offsetOf(endMs, rate, pcm.size)
+            if ((to - from) * 1_000L / (rate * 2) < ClipPolicy.MIN_DURATION_MS) return@withContext null
+            val part = pcm.copyOfRange(from, to)
+            val updated = try {
+                store.replaceAudio(id, part, part.size, rate)
+            } finally {
+                part.fill(0)
+            }
+            _clips.value = store.list()
+            updated
+        } finally {
+            pcm.fill(0)
+        }
     }
 
     suspend fun pcm(id: String): Pair<ByteArray, Int>? = withContext(Dispatchers.IO) { store.readPcm(id) }
 
-    fun file(id: String): File = store.audioFile(id)
+    /** The recording as a WAV file (decrypted) for playing, sharing or exporting. Wipe it after use. */
+    suspend fun wav(id: String): ByteArray? = withContext(Dispatchers.IO) { store.readWav(id) }
 
     suspend fun pendingRetries(): List<SavedClip> = withContext(Dispatchers.IO) {
         store.list().filter { it.retryWhenOnline && it.status == ClipStatus.UNIDENTIFIED }
@@ -94,6 +124,11 @@ class ClipRepository(
 
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {
         store.delete(id)
+        _clips.value = store.list()
+    }
+
+    suspend fun deleteMany(ids: Collection<String>) = withContext(Dispatchers.IO) {
+        ids.forEach { store.delete(it) }
         _clips.value = store.list()
     }
 
@@ -109,6 +144,9 @@ class ClipRepository(
         store.purge(ClipPolicy.retentionMs(prefs.recordingsRetentionDays), ClipPolicy.MAX_TOTAL_BYTES)
         _clips.value = store.list()
     }
+
+    /** Encrypts recordings that older versions stored as plain WAV. */
+    suspend fun sealLegacy(): Int = withContext(Dispatchers.IO) { store.sealLegacy() }
 
     data class Identified(val recognitionId: String, val trackId: String, val title: String, val artist: String)
 

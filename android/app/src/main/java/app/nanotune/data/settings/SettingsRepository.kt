@@ -41,10 +41,14 @@ data class AppSettings(
     val enhancedConsentAt: Long? = null,
     /** Sorted, comma-separated engine ids the user agreed to; a new engine asks again. */
     val enhancedConsentProviders: String = "",
-    /** Opt-in: keep recordings on this phone (see docs/PRIVACY.md). */
-    val saveRecordings: Boolean = false,
+    /**
+     * Keep what the Identify button records on this phone (on by default since 0.3, at the owner's
+     * request; see docs/PRIVACY.md). Every tap then records and stores a clip, even without an engine.
+     */
+    val saveRecordings: Boolean = true,
+    /** When the user last turned "Keep recordings" on themselves (informational). */
     val recordingsConsentAt: Long? = null,
-    val recordingsPolicy: RecordingsPolicy = RecordingsPolicy.NOT_IDENTIFIED,
+    val recordingsPolicy: RecordingsPolicy = RecordingsPolicy.ALL,
     /** 0 = keep until deleted. */
     val recordingsRetentionDays: Int = 30,
     val retryRecordingsOnline: Boolean = true,
@@ -131,7 +135,7 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
             enhancedEnabled = this[ENHANCED_ENABLED] ?: defaults.enhancedEnabled,
             enhancedConsentAt = this[ENHANCED_CONSENT_AT],
             enhancedConsentProviders = this[ENHANCED_CONSENT_PROVIDERS] ?: "",
-            saveRecordings = (this[SAVE_RECORDINGS] ?: false) && this[RECORDINGS_CONSENT_AT] != null,
+            saveRecordings = this[KEEP_RECORDINGS] ?: defaults.saveRecordings,
             recordingsConsentAt = this[RECORDINGS_CONSENT_AT],
             recordingsPolicy = this[RECORDINGS_POLICY]?.let { runCatching { RecordingsPolicy.valueOf(it) }.getOrNull() } ?: defaults.recordingsPolicy,
             recordingsRetentionDays = this[RECORDINGS_RETENTION_DAYS] ?: defaults.recordingsRetentionDays,
@@ -156,7 +160,7 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
         val consent = settings.enhancedConsentAt
         if (consent == null) remove(ENHANCED_CONSENT_AT) else this[ENHANCED_CONSENT_AT] = consent
         this[ENHANCED_CONSENT_PROVIDERS] = settings.enhancedConsentProviders
-        this[SAVE_RECORDINGS] = settings.saveRecordings
+        this[KEEP_RECORDINGS] = settings.saveRecordings
         val recordingsConsent = settings.recordingsConsentAt
         if (recordingsConsent == null) remove(RECORDINGS_CONSENT_AT) else this[RECORDINGS_CONSENT_AT] = recordingsConsent
         this[RECORDINGS_POLICY] = settings.recordingsPolicy.name
@@ -180,9 +184,11 @@ class SettingsRepository(private val context: Context, private val clock: () -> 
         val ENHANCED_ENABLED = booleanPreferencesKey("enhanced_enabled")
         val ENHANCED_CONSENT_AT = longPreferencesKey("enhanced_consent_at")
         val ENHANCED_CONSENT_PROVIDERS = stringPreferencesKey("enhanced_consent_providers")
-        val SAVE_RECORDINGS = booleanPreferencesKey("save_recordings")
+        // 0.3 keys: the 0.2 keys ("save_recordings", "recordings_policy") stored "off" for everyone,
+        // so new keys let the new defaults (keep every recording) apply after the update.
+        val KEEP_RECORDINGS = booleanPreferencesKey("keep_recordings_v3")
         val RECORDINGS_CONSENT_AT = longPreferencesKey("recordings_consent_at")
-        val RECORDINGS_POLICY = stringPreferencesKey("recordings_policy")
+        val RECORDINGS_POLICY = stringPreferencesKey("recordings_keep_v3")
         val RECORDINGS_RETENTION_DAYS = intPreferencesKey("recordings_retention_days")
         val RETRY_RECORDINGS_ONLINE = booleanPreferencesKey("retry_recordings_online")
         val PRIVACY_SEEN = booleanPreferencesKey("privacy_notice_seen")

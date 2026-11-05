@@ -119,6 +119,48 @@ object Pcm {
         return out
     }
 
+    /**
+     * The loudest stretch of [windowSeconds] in mono PCM16 (energy summed per second), returned as
+     * a byte range. Recordings often start with talking or silence; engines only look at ~12 s, so
+     * this picks the part most likely to contain the music. The whole clip if it is shorter.
+     */
+    fun loudestWindow(pcm: ByteArray, length: Int, sampleRate: Int, windowSeconds: Int): IntRange {
+        require(length in 0..pcm.size && sampleRate > 0 && windowSeconds > 0) { "invalid arguments" }
+        val usable = length - length % BYTES_PER_SAMPLE
+        val bytesPerSecond = sampleRate * BYTES_PER_SAMPLE
+        val windowBytes = windowSeconds * bytesPerSecond
+        if (usable <= windowBytes) return 0 until usable
+        val seconds = usable / bytesPerSecond
+        val energy = DoubleArray(seconds) { second ->
+            var sum = 0.0
+            val firstSample = second * sampleRate
+            for (i in firstSample until firstSample + sampleRate) {
+                val s = sampleAt(pcm, i).toDouble()
+                sum += s * s
+            }
+            sum
+        }
+        var window = 0.0
+        for (i in 0 until windowSeconds) window += energy[i]
+        var best = window
+        var bestStart = 0
+        for (start in 1..seconds - windowSeconds) {
+            window += energy[start + windowSeconds - 1] - energy[start - 1]
+            if (window > best) {
+                best = window
+                bestStart = start
+            }
+        }
+        val from = bestStart * bytesPerSecond
+        return from until minOf(usable, from + windowBytes)
+    }
+
+    /** Byte offset of [ms] in mono PCM16 at [sampleRate], aligned to whole samples and clamped. */
+    fun offsetOf(ms: Long, sampleRate: Int, length: Int): Int {
+        val raw = (ms.coerceAtLeast(0) * sampleRate / 1_000L * BYTES_PER_SAMPLE).coerceAtMost(length.toLong()).toInt()
+        return raw - raw % BYTES_PER_SAMPLE
+    }
+
     private const val PHASES = 64
     private const val ZERO_CROSSINGS = 8
 

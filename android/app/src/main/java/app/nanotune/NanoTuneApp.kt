@@ -1,6 +1,7 @@
 package app.nanotune
 
 import android.app.Application
+import app.nanotune.feature.recordings.RecordingsViewModel
 import app.nanotune.service.ClipRetryWorker
 import kotlinx.coroutines.launch
 
@@ -18,8 +19,11 @@ class NanoTuneApp : Application() {
                 container.historyRepository.closeDanglingSessions()
             }
             container.serverRepository.refresh()
-            // Apply the retention period and pick up recordings still waiting to be identified.
+            // Encrypt recordings saved by 0.2, apply the retention period, drop copies shared earlier,
+            // and pick up recordings still waiting to be identified.
+            container.clipRepository.sealLegacy()
             container.clipRepository.applyRetention()
+            runCatching { RecordingsViewModel.sharedDir(this@NanoTuneApp).listFiles()?.forEach { it.delete() } }
             if (container.clipRepository.pendingRetries().isNotEmpty()) ClipRetryWorker.schedule(this@NanoTuneApp)
             container.syncRepository.syncNow()
         }

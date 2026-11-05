@@ -1,5 +1,6 @@
 package app.nanotune.recognition
 
+import app.nanotune.core.audio.Pcm
 import app.nanotune.data.clips.ClipRepository
 import app.nanotune.data.repository.HistoryRepository
 import app.nanotune.data.repository.SyncRepository
@@ -14,7 +15,8 @@ import app.nanotune.recognition.enhanced.EnhancedRecognitionClient
 /**
  * Identifies a saved recording later: first with the on-device engine (ShazamKit), then — only if
  * that finds nothing and the user agreed — with the server's engines. ShazamKit results are never
- * sent to or compared with other engines.
+ * sent to or compared with other engines. Engines get the loudest 12 seconds of the recording (or
+ * of the part the user selected), which is where the music usually is.
  */
 class ClipRecognizer(
     private val primary: StreamingRecognitionProvider?,
@@ -32,35 +34,47 @@ class ClipRecognizer(
         data class NoEngine(val message: String) : Result
     }
 
-    suspend fun identify(clipId: String): Result {
+    /** Whether any engine could be asked right now (ShazamKit in this build, or the server's engines). */
+    suspend fun canIdentify(): Boolean = primary != null || gate.primaryEligible()
+
+    /** Identifies [clipId]; [fromMs]/[toMs] limit it to a part of the recording. */
+    suspend fun identify(clipId: String, fromMs: Long? = null, toMs: Long? = null): Result {
         val clip = clips.clips.value.firstOrNull { it.id == clipId }
-        if (clip?.status == ClipStatus.IDENTIFIED) return Result.Failed("This recording is already identified.", retryable = false)
+        if (clip?.status == ClipStatus.IDENTIFIED && fromMs == null) {
+            return Result.Failed("This recording is already identified.", retryable = false)
+        }
         val (pcm, rate) = clips.pcm(clipId) ?: return Result.Failed("The recording file is missing.", retryable = false)
         try {
+            val from = fromMs?.let { Pcm.offsetOf(it, rate, pcm.size) } ?: 0
+            val to = toMs?.let { Pcm.offsetOf(it, rate, pcm.size) } ?: pcm.size
+            if (to - from < rate * 2 * MIN_SECONDS) return Result.Failed("Select at least $MIN_SECONDS seconds.", retryable = false)
+            gate.ensureFresh()
             var outcome: RecognitionOutcome? = null
             var engine = ""
             if (primary != null && primary.availability() == ProviderAvailability.Ready) {
                 engine = RecognitionEngine.SHAZAM_LABEL
-                // Query signatures are kept short (as when listening live); the engine gets its own copy.
-                val length = evenPrefix(pcm.size, rate, MAX_SIGNATURE_SECONDS)
-                val sample = AudioSample(pcm.copyOf(length), rate, durationMs = length * 1_000L / (rate * 2))
+                val sample = window(pcm, from, to, rate, MAX_SIGNATURE_SECONDS)
                 outcome = try {
-                    primary.identify(sample)
+                    primary.identify(AudioSample(sample, rate, durationMs = sample.size * 1_000L / (rate * 2)))
                 } finally {
-                    sample.clear()
+                    sample.fill(0)
                 }
                 if (outcome !is RecognitionOutcome.Match) recordAttempt(clipId, engine, outcome)
             }
             if (outcome !is RecognitionOutcome.Match && gate.primaryEligible()) {
                 engine = gate.providerNames()
-                val upload = evenPrefix(pcm.size, rate, gate.maxUploadSeconds())
-                outcome = enhanced.identify(pcm, upload, rate, EnhancedRecognitionClient.Mode.PRIMARY)
+                val upload = window(pcm, from, to, rate, gate.maxUploadSeconds())
+                outcome = try {
+                    enhanced.identify(upload, upload.size, rate, EnhancedRecognitionClient.Mode.PRIMARY)
+                } finally {
+                    upload.fill(0)
+                }
                 if (outcome !is RecognitionOutcome.Match) recordAttempt(clipId, engine, outcome)
             }
             return when (outcome) {
                 null -> Result.NoEngine(
                     if (primary == null) {
-                        "No recognition engine is available. Turn on your server's engines in Settings."
+                        "No recognition engine is available. Allow your server's engines in Settings (or on the Identify screen)."
                     } else {
                         "The recognition engine isn't reachable right now."
                     },
@@ -96,13 +110,19 @@ class ClipRecognizer(
         clips.recordAttempt(clipId, ClipAttempt(System.currentTimeMillis(), engine, RecognitionEngine.attemptOutcome(outcome)), null)
     }
 
-    /** Byte length of at most [seconds] of 16-bit mono audio, rounded down to whole samples. */
-    private fun evenPrefix(size: Int, rate: Int, seconds: Int): Int {
-        val length = minOf(size, rate * 2 * seconds)
-        return length - length % 2
+    /** A copy of the loudest [seconds] between byte offsets [from] and [to]. */
+    private fun window(pcm: ByteArray, from: Int, to: Int, rate: Int, seconds: Int): ByteArray {
+        val part = pcm.copyOfRange(from, to)
+        return try {
+            val range = Pcm.loudestWindow(part, part.size, rate, seconds)
+            part.copyOfRange(range.first, range.last + 1)
+        } finally {
+            part.fill(0)
+        }
     }
 
     private companion object {
         const val MAX_SIGNATURE_SECONDS = 12
+        const val MIN_SECONDS = 3
     }
 }

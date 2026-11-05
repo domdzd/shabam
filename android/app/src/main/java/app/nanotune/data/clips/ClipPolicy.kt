@@ -15,14 +15,25 @@ object ClipPolicy {
     /** Clips shorter than this are not worth keeping. */
     const val MIN_DURATION_MS = 3_000L
 
-    /** Reason to keep [outcome]'s recording automatically, or null to not keep it. */
-    fun autoSaveReason(outcome: RecognitionOutcome, policy: RecordingsPolicy, offlineCapture: Boolean): ClipReason? = when {
+    /** Imported audio files are cut to this length (trim afterwards to pick another part). */
+    const val MAX_IMPORT_SECONDS = 90
+
+    /**
+     * Why [outcome]'s recording is kept, or null to not keep it. With "Keep recordings" on, nothing
+     * that could not be identified is ever lost: no engine, offline, errors and no-matches are all
+     * kept; matches only with [RecordingsPolicy.ALL].
+     */
+    fun autoSaveReason(
+        outcome: RecognitionOutcome,
+        policy: RecordingsPolicy,
+        offlineCapture: Boolean,
+        noEngine: Boolean = false,
+    ): ClipReason? = when {
         offlineCapture -> ClipReason.OFFLINE
+        noEngine -> ClipReason.NO_ENGINE
         outcome is RecognitionOutcome.Match -> if (policy == RecordingsPolicy.ALL) ClipReason.MATCHED else null
         outcome == RecognitionOutcome.NoMatch -> ClipReason.NO_MATCH
-        outcome is RecognitionOutcome.Error && outcome.retryable -> ClipReason.ERROR
-        outcome is RecognitionOutcome.Unavailable -> ClipReason.ERROR
-        else -> null
+        else -> ClipReason.ERROR
     }
 
     fun retentionMs(days: Int): Long = if (days <= 0) 0L else days * 86_400_000L

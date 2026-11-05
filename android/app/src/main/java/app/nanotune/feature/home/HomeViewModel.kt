@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class EngineStatus {
     READY,
@@ -42,7 +43,14 @@ enum class EngineStatus {
 sealed interface IdentifyPhase {
     data object Idle : IdentifyPhase
     data object Preparing : IdentifyPhase
-    data class Listening(val elapsedMs: Long, val maxMs: Long, val level: Float, val micSilenced: Boolean) : IdentifyPhase
+    data class Listening(
+        val elapsedMs: Long,
+        val maxMs: Long,
+        val level: Float,
+        val micSilenced: Boolean,
+        /** No engine can identify it right now; the recording is kept for later. */
+        val recordOnly: Boolean = false,
+    ) : IdentifyPhase
     data object SearchingEnhanced : IdentifyPhase
 }
 
@@ -51,8 +59,16 @@ sealed interface IdentifyResultUi {
     data object NoMatch : IdentifyResultUi
     data class Problem(val message: String, val hint: SetupHint?, val retryable: Boolean, val permission: Boolean = false) : IdentifyResultUi
 
-    /** Offline: the recording was kept and will be identified automatically later. */
-    data object SavedForLater : IdentifyResultUi
+    /**
+     * Recorded and kept although no engine could identify it now ([reason] says why); identified
+     * automatically when back online if [autoRetry].
+     */
+    data class Saved(
+        val reason: String,
+        val autoRetry: Boolean,
+        val hint: SetupHint?,
+        val consentProviders: List<ProviderInfoDto> = emptyList(),
+    ) : IdentifyResultUi
 
     /** The server offers recognition engines, but the user hasn't agreed to send them audio. */
     data class ConsentNeeded(val providers: List<ProviderInfoDto>) : IdentifyResultUi
@@ -72,6 +88,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
 
     private var job: Job? = null
+    private val stopRequested = AtomicBoolean(false)
     private val resultTrackId = MutableStateFlow<String?>(null)
     private var lastResult: RecognitionEngine.Result? = null
     private var pendingClip: CapturedClip? = null
@@ -110,7 +127,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     val keepsRecordings: StateFlow<Boolean> = container.settingsRepository.settings
         .map { it.saveRecordings }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val busy: Boolean get() = job?.isActive == true
 
@@ -124,13 +141,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
         resultTrackId.value = null
         discardPendingClip()
+        stopRequested.set(false)
         _state.value = HomeUiState(phase = IdentifyPhase.Preparing)
         job = viewModelScope.launch {
-            val result = container.recognitionEngine.identifyOnce { progress ->
+            val result = container.recognitionEngine.identifyOnce(shouldStop = { stopRequested.get() }) { progress ->
                 val phase = when (progress) {
                     RecognitionEngine.Progress.Preparing -> IdentifyPhase.Preparing
                     is RecognitionEngine.Progress.Listening ->
-                        IdentifyPhase.Listening(progress.elapsedMs, progress.maxMs, progress.level, progress.micSilenced)
+                        IdentifyPhase.Listening(progress.elapsedMs, progress.maxMs, progress.level, progress.micSilenced, progress.recordOnly)
                     RecognitionEngine.Progress.SearchingEnhanced -> IdentifyPhase.SearchingEnhanced
                 }
                 _state.update { it.copy(phase = phase) }
@@ -142,8 +160,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 result.pendingClip != null -> ClipNote.PENDING
                 else -> null
             }
-            val ui = if (result.savedForLater) {
-                IdentifyResultUi.SavedForLater
+            val ui = if (result.recordedOnly && result.savedClip != null) {
+                IdentifyResultUi.Saved(
+                    reason = reasonText(result.outcome),
+                    autoRetry = result.savedForLater,
+                    hint = result.setupHint,
+                    consentProviders = if (result.consentNeeded) container.enhancedGate.providers() else emptyList(),
+                )
+            } else if (result.recordedOnly) {
+                IdentifyResultUi.Problem(
+                    "The recording was too short to keep (at least 3 seconds). " + reasonText(result.outcome),
+                    result.setupHint,
+                    retryable = true,
+                )
             } else if (result.consentNeeded) {
                 IdentifyResultUi.ConsentNeeded(container.enhancedGate.providers())
             } else when (val outcome = result.outcome) {
@@ -161,8 +190,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     permission = outcome.kind == ErrorKind.AUDIO && !container.audioCapture.hasPermission(),
                 )
             }
-            _state.value = HomeUiState(phase = IdentifyPhase.Idle, result = ui, clipNote = if (result.savedForLater) null else clipNote)
+            _state.value = HomeUiState(phase = IdentifyPhase.Idle, result = ui, clipNote = if (ui is IdentifyResultUi.Saved) null else clipNote)
         }
+    }
+
+    /** Ends the recording now and keeps what was recorded (instead of discarding it). */
+    fun stopEarly() {
+        stopRequested.set(true)
+    }
+
+    private fun reasonText(outcome: RecognitionOutcome): String = when (outcome) {
+        is RecognitionOutcome.Unavailable -> outcome.reason
+        is RecognitionOutcome.Error -> outcome.safeMessage
+        else -> "No recognition engine was available."
     }
 
     /** Keeps the recording of the last identification (user tapped "Keep recording"). */
@@ -199,9 +239,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         discardPendingClip()
     }
 
-    /** Called when the app goes to the background: Android would silence the mic anyway. */
+    /**
+     * Called when the app goes to the background: Android silences the microphone for background
+     * apps. A recording that is being kept is stopped and saved; otherwise the attempt is cancelled.
+     */
     fun cancelBecauseBackgrounded() {
         if (!busy) return
+        if (_state.value.phase is IdentifyPhase.Listening && keepsRecordings.value) {
+            stopEarly()
+            return
+        }
         job?.cancel()
         discardPendingClip()
         _state.value = HomeUiState(

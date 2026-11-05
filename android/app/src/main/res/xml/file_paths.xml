@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Only the saved-recordings folder can ever be shared. -->
+<!-- Only decrypted copies of recordings the user chose to share are ever exposed (cleared on start). -->
 <paths>
-    <files-path name="clips" path="clips/" />
+    <cache-path name="shared" path="shared/" />
 </paths>

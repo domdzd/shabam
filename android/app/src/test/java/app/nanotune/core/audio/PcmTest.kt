@@ -79,4 +79,31 @@ class PcmTest {
         assertEquals(0f, Pcm.level(ByteArray(2000), 2000))
         assertTrue(Pcm.level(sine(440.0, 16_000, 0.1, 0.9), 3200) > 0.9f)
     }
+
+    @Test
+    fun loudestWindowFindsTheMusicAfterSilence() {
+        val rate = 16_000
+        // 10 s of silence, then 12 s of music, then 8 s of silence.
+        val clip = ByteArray(rate * 2 * 10) + sine(440.0, rate, 12.0) + ByteArray(rate * 2 * 8)
+        val window = Pcm.loudestWindow(clip, clip.size, rate, windowSeconds = 12)
+        assertEquals(10 * rate * 2, window.first)
+        assertEquals(12 * rate * 2, window.last - window.first + 1)
+    }
+
+    @Test
+    fun loudestWindowReturnsEverythingForShortClips() {
+        val clip = sine(440.0, 16_000, 5.0)
+        assertEquals(0 until clip.size, Pcm.loudestWindow(clip, clip.size, 16_000, windowSeconds = 12))
+        // An odd length is rounded down to whole samples.
+        assertEquals(0 until clip.size - 2, Pcm.loudestWindow(clip, clip.size - 1, 16_000, windowSeconds = 12))
+    }
+
+    @Test
+    fun offsetOfAlignsAndClamps() {
+        assertEquals(32_000, Pcm.offsetOf(1_000, 16_000, 100_000))
+        assertEquals(0, Pcm.offsetOf(-5, 16_000, 100_000))
+        assertEquals(100_000, Pcm.offsetOf(60_000, 16_000, 100_000))
+        assertEquals(32, Pcm.offsetOf(1, 16_000, 100_000)) // 16 samples
+        assertEquals(98, Pcm.offsetOf(60_000, 16_000, 99))  // clamped to an even length
+    }
 }

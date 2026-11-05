@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.core.content.edit
 import app.nanotune.core.audio.AudioCapture
 import app.nanotune.core.network.Connectivity
+import app.nanotune.core.security.KeystoreClipCodec
 import app.nanotune.data.clips.ClipRepository
 import app.nanotune.data.clips.ClipStore
 import app.nanotune.data.local.NanoTuneDatabase
@@ -97,10 +98,10 @@ class AppContainer(private val app: Application) {
 
     val enhancedClient = EnhancedRecognitionClient(backendClient, accountRepository, credentialStore, installId = { installId() })
 
-    /** Opt-in saved recordings, in app-private storage (never backed up). */
+    /** Saved recordings, encrypted in app-private storage (never backed up or synced). */
     val clipRepository: ClipRepository by lazy {
         ClipRepository(
-            ClipStore(File(app.filesDir, "clips"), json),
+            ClipStore(File(app.filesDir, "clips"), json, codec = KeystoreClipCodec()),
             settingsRepository,
             onRetryNeeded = { ClipRetryWorker.schedule(app) },
         )

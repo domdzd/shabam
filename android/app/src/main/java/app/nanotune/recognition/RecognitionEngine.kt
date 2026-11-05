@@ -15,26 +15,30 @@ import app.nanotune.domain.model.ClipReason
 import app.nanotune.domain.model.ErrorKind
 import app.nanotune.domain.model.RecognitionMode
 import app.nanotune.domain.model.RecognitionOutcome
+import app.nanotune.domain.model.RecordingsPolicy
 import app.nanotune.domain.model.SavedClip
 import app.nanotune.recognition.enhanced.EnhancedRecognitionClient
 import app.nanotune.recognition.shazamkit.ShazamTokenSource
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs one "tap to identify" attempt end to end:
  *
- * 1. Picks the route **before** opening the microphone: the on-device engine (ShazamKit), the
- *    server's engines (if the user agreed), or — when offline and the user keeps recordings — a
- *    capture to identify later. If nothing can work, it explains why without recording.
- * 2. Streams audio to the engine until the first match or the deadline.
- * 3. Optionally falls back to the server engines after a ShazamKit "no match".
- * 4. Saves a match, then keeps the recording only if the user opted in (or offers to keep it).
+ * 1. Picks the route **before** opening the microphone: the on-device engine (ShazamKit) or the
+ *    server's engines (if the user agreed). With "Keep recordings" on (the default) the button
+ *    always records, even when no engine can answer right now; the clip is then kept to identify
+ *    later. With it off and no engine, it explains why without recording.
+ * 2. Streams audio to the engine until the first match, the deadline, or the user stops early.
+ * 3. Saves the recording right away (before any upload can fail), then optionally asks the
+ *    server's engines and finally updates the recording with what was found.
  */
 class RecognitionEngine(
     private val primary: StreamingRecognitionProvider?,
@@ -50,7 +54,14 @@ class RecognitionEngine(
 ) {
     sealed interface Progress {
         data object Preparing : Progress
-        data class Listening(val elapsedMs: Long, val maxMs: Long, val level: Float, val micSilenced: Boolean) : Progress
+        data class Listening(
+            val elapsedMs: Long,
+            val maxMs: Long,
+            val level: Float,
+            val micSilenced: Boolean,
+            /** Recording to keep: no engine can identify it right now. */
+            val recordOnly: Boolean = false,
+        ) : Progress
         data object SearchingEnhanced : Progress
     }
 
@@ -61,11 +72,13 @@ class RecognitionEngine(
         val usedEnhanced: Boolean = false,
         /** Server engines exist but the user hasn't agreed to send them audio yet. */
         val consentNeeded: Boolean = false,
-        /** Recording kept automatically (user opted in). */
+        /** The recording as kept on this phone. */
         val savedClip: SavedClip? = null,
         /** Recording held in memory that the user may still choose to keep. Wipe when done. */
         val pendingClip: CapturedClip? = null,
-        /** The audio was captured while offline and will be identified later. */
+        /** Recorded although no engine could identify it ([outcome] says why). */
+        val recordedOnly: Boolean = false,
+        /** …and it will be identified automatically when the phone is back online. */
         val savedForLater: Boolean = false,
     )
 
@@ -73,7 +86,8 @@ class RecognitionEngine(
 
     suspend fun primaryAvailability(): ProviderAvailability = primary?.availability() ?: NOT_BUNDLED
 
-    suspend fun identifyOnce(onProgress: (Progress) -> Unit): Result {
+    /** [shouldStop] is polled while recording: true ends the recording early and keeps it. */
+    suspend fun identifyOnce(shouldStop: () -> Boolean = { false }, onProgress: (Progress) -> Unit): Result {
         onProgress(Progress.Preparing)
         val prefs = settings.current()
         val maxMs = prefs.manualListenSeconds * 1_000L
@@ -91,24 +105,16 @@ class RecognitionEngine(
             serverConsented && enhancedGate.serverUnreachable()
         }
         val couldIdentifyLater = primary != null || serverConsented
-        val offlineCapture = !primaryReady && !serverPrimary && prefs.saveRecordings && prefs.retryRecordingsOnline &&
-            engineUnreachable && couldIdentifyLater
+        val canIdentifyNow = primaryReady || serverPrimary
+        val recordOnly = !canIdentifyNow && prefs.saveRecordings
+        val autoRetry = recordOnly && prefs.retryRecordingsOnline && engineUnreachable && couldIdentifyLater
+        val serverUnreachableNow = primary == null && engineUnreachable
+        val whyNot: RecognitionOutcome = if (serverUnreachableNow) SERVER_UNREACHABLE else availability.asOutcome()
+        val setupHint = if (serverUnreachableNow) null else (availability as? ProviderAvailability.NotConfigured)?.hint
+        val consentNeeded = !canIdentifyNow && enhancedGate.consentNeeded()
 
-        if (!primaryReady && !serverPrimary && !offlineCapture) {
-            if (primary == null && engineUnreachable) {
-                return Result(
-                    RecognitionOutcome.Error(
-                        "Can't reach your NanoTune server right now, so its engines can't identify songs. Check your connection and try again.",
-                        retryable = true,
-                        kind = ErrorKind.NETWORK,
-                    ),
-                )
-            }
-            return Result(
-                availability.asOutcome(),
-                setupHint = (availability as? ProviderAvailability.NotConfigured)?.hint,
-                consentNeeded = enhancedGate.consentNeeded(),
-            )
+        if (!canIdentifyNow && !recordOnly) {
+            return Result(whyNot, setupHint = setupHint, consentNeeded = consentNeeded)
         }
 
         val rates = primary?.supportedSampleRates ?: listOf(48_000, 44_100, 16_000)
@@ -120,10 +126,11 @@ class RecognitionEngine(
                 return Result(RecognitionOutcome.Error(opened.reason, retryable = true, kind = ErrorKind.AUDIO))
         }
 
-        val uploadMs = enhancedGate.maxUploadSeconds() * 1_000L
-        val listenMs = if (serverPrimary) minOf(maxMs, uploadMs) else maxMs
+        val uploadSeconds = enhancedGate.maxUploadSeconds()
+        // Server engines only take a short clip; a recording that is kept uses the full limit.
+        val listenMs = if (serverPrimary && !prefs.saveRecordings) minOf(maxMs, uploadSeconds * 1_000L) else maxMs
         // Keep the audio in memory only when something may need it afterwards.
-        val keepAudio = serverPrimary || fallback || offlineCapture || prefs.saveRecordings
+        val keepAudio = serverPrimary || fallback || prefs.saveRecordings
         val clip = if (keepAudio) ByteArray((recorder.bytesPerSecond * listenMs / 1_000).toInt()) else null
         var clipLength = 0
         val sink: (ByteArray, Int) -> Unit = { buffer, length ->
@@ -135,44 +142,66 @@ class RecognitionEngine(
         }
 
         var outcome: RecognitionOutcome
-        var usedEnhanced = false
-        var engineLabel = if (primaryReady) SHAZAM_LABEL else enhancedGate.providerNames()
         try {
             if (!recorder.start()) {
                 clip?.fill(0)
                 return Result(RecognitionOutcome.Error("The microphone is busy. Close other recording apps and try again.", retryable = true, kind = ErrorKind.AUDIO))
             }
             outcome = if (primaryReady && primary != null) {
-                listenWithStream(primary, recorder, listenMs, onProgress, sink)
+                listenWithStream(primary, recorder, listenMs, shouldStop, onProgress, sink)
             } else {
-                recordClip(recorder, listenMs, onProgress, sink)
-                RecognitionOutcome.NoMatch
+                recordClip(recorder, listenMs, recordOnly, shouldStop, onProgress, sink)
+                if (recordOnly) whyNot else RecognitionOutcome.NoMatch
             }
         } finally {
             recorder.release()
         }
         val sampleRate = recorder.sampleRateHz
-        val uploadBytes = minOf(clipLength, (recorder.bytesPerSecond * uploadMs / 1_000).toInt())
-        val enoughAudio = clipLength >= recorder.bytesPerSecond * MIN_UPLOAD_SECONDS
+        val captured = if (clip != null && clipLength > 0) CapturedClip(clip, clipLength, sampleRate) else null
+        val attempts = mutableListOf<ClipAttempt>()
+        if (primaryReady) attempts += ClipAttempt(System.currentTimeMillis(), SHAZAM_LABEL, attemptOutcome(outcome))
 
-        if (serverPrimary && clip != null && enoughAudio) {
-            onProgress(Progress.SearchingEnhanced)
-            outcome = enhanced.identify(clip, uploadBytes, sampleRate, EnhancedRecognitionClient.Mode.PRIMARY)
-            usedEnhanced = true
-        } else if (fallback && clip != null && enoughAudio && worthFallback(outcome)) {
-            onProgress(Progress.SearchingEnhanced)
-            outcome = enhanced.identify(clip, uploadBytes, sampleRate, EnhancedRecognitionClient.Mode.FALLBACK)
-            usedEnhanced = true
-            engineLabel = "$SHAZAM_LABEL, then ${enhancedGate.providerNames()}"
-        } else if (offlineCapture) {
-            outcome = RecognitionOutcome.Error(
-                "You're offline, so NanoTune kept the recording and will identify it when you're back online.",
-                retryable = true,
-                kind = ErrorKind.NETWORK,
-            )
+        // Keep the recording first, so nothing that happens next (upload errors, cancelling) loses it.
+        val earlyReason = if (captured != null && prefs.saveRecordings) {
+            ClipPolicy.autoSaveReason(outcome, prefs.recordingsPolicy, offlineCapture = autoRetry, noEngine = recordOnly)
+        } else {
+            null
+        }
+        var savedClip: SavedClip? = if (captured != null && earlyReason != null) {
+            withContext(NonCancellable) {
+                runCatching { clips.save(captured, earlyReason, retryWhenOnline = autoRetry) }.getOrNull()
+            }
+        } else {
+            null
         }
 
-        val match = outcome as? RecognitionOutcome.Match
+        var usedEnhanced = false
+        val enoughAudio = clipLength >= recorder.bytesPerSecond * MIN_UPLOAD_SECONDS
+        val askServer = (serverPrimary || (fallback && worthFallback(outcome))) && clip != null
+        if (askServer && clip != null && !enoughAudio) {
+            if (serverPrimary) {
+                outcome = RecognitionOutcome.Error("The recording was too short to identify (at least $MIN_UPLOAD_SECONDS s).", retryable = true)
+            }
+        } else if (askServer && clip != null) {
+            onProgress(Progress.SearchingEnhanced)
+            val window = Pcm.loudestWindow(clip, clipLength, sampleRate, uploadSeconds)
+            val upload = clip.copyOfRange(window.first, window.last + 1)
+            outcome = try {
+                enhanced.identify(
+                    upload,
+                    upload.size,
+                    sampleRate,
+                    if (serverPrimary) EnhancedRecognitionClient.Mode.PRIMARY else EnhancedRecognitionClient.Mode.FALLBACK,
+                )
+            } finally {
+                upload.fill(0)
+            }
+            attempts += ClipAttempt(System.currentTimeMillis(), enhancedGate.providerNames(), attemptOutcome(outcome))
+            usedEnhanced = true
+        }
+
+        val finalOutcome = outcome
+        val match = finalOutcome as? RecognitionOutcome.Match
         val saved = match?.let {
             history.saveRecognition(it.track, it.providerId, RecognitionMode.MANUAL, sessionId = null, confidence = it.confidence)
         }
@@ -181,40 +210,49 @@ class RecognitionEngine(
             sync.requestSync()
         }
 
-        var savedClip: SavedClip? = null
+        // Bring the kept recording up to date (attempts, identification, retry), or offer to keep it.
         var pendingClip: CapturedClip? = null
-        if (clip != null && prefs.saveRecordings && clipLength > 0) {
-            val captured = CapturedClip(clip, clipLength, sampleRate)
-            val reason = ClipPolicy.autoSaveReason(outcome, prefs.recordingsPolicy, offlineCapture)
-            if (reason != null) {
-                val networkFailure = outcome is RecognitionOutcome.Error && outcome.kind == ErrorKind.NETWORK
-                savedClip = runCatching {
-                    clips.save(
-                        captured,
-                        reason,
-                        retryWhenOnline = offlineCapture || (networkFailure && prefs.retryRecordingsOnline),
-                        recognitionId = saved?.recognitionId,
-                        trackId = saved?.trackId,
-                        title = match?.track?.title,
-                        artist = match?.track?.artist,
-                        firstAttempt = if (offlineCapture) null else ClipAttempt(System.currentTimeMillis(), engineLabel, attemptOutcome(outcome)),
-                    )
-                }.getOrNull()
-                captured.wipe()
-            } else {
-                pendingClip = captured
-            }
+        val identified = if (match != null && saved != null) {
+            ClipRepository.Identified(saved.recognitionId, saved.trackId, match.track.title, match.track.artist)
         } else {
-            clip?.fill(0)
+            null
         }
+        val early = savedClip
+        withContext(NonCancellable) {
+            when {
+                early != null && identified != null && prefs.recordingsPolicy != RecordingsPolicy.ALL -> {
+                    // Only unidentified recordings are kept automatically; let the user keep this one.
+                    clips.delete(early.id)
+                    savedClip = null
+                    pendingClip = captured
+                }
+                early != null -> {
+                    var latest: SavedClip? = early
+                    attempts.forEachIndexed { index, attempt ->
+                        latest = clips.recordAttempt(early.id, attempt, if (index == attempts.lastIndex) identified else null) ?: latest
+                    }
+                    val networkFailure = finalOutcome is RecognitionOutcome.Error && finalOutcome.kind == ErrorKind.NETWORK
+                    if (identified == null && !autoRetry && networkFailure && prefs.retryRecordingsOnline && couldIdentifyLater) {
+                        clips.setRetry(early.id, true)
+                    }
+                    savedClip = latest
+                }
+                captured != null && prefs.saveRecordings && identified != null -> pendingClip = captured
+            }
+            Unit
+        }
+        if (pendingClip == null) clip?.fill(0)
 
         return Result(
-            outcome = outcome,
+            outcome = finalOutcome,
             saved = saved,
+            setupHint = if (recordOnly) setupHint else null,
             usedEnhanced = usedEnhanced,
+            consentNeeded = recordOnly && consentNeeded,
             savedClip = savedClip,
             pendingClip = pendingClip,
-            savedForLater = offlineCapture && savedClip != null,
+            recordedOnly = recordOnly,
+            savedForLater = autoRetry && savedClip != null,
         )
     }
 
@@ -241,6 +279,7 @@ class RecognitionEngine(
         provider: StreamingRecognitionProvider,
         recorder: AudioCapture.Recorder,
         maxMs: Long,
+        shouldStop: () -> Boolean,
         onProgress: (Progress) -> Unit,
         sink: (ByteArray, Int) -> Unit,
     ): RecognitionOutcome = coroutineScope {
@@ -267,7 +306,7 @@ class RecognitionEngine(
             val streamStart = System.currentTimeMillis()
             var bytes = 0L
             var lastProgressAt = -PROGRESS_INTERVAL_MS
-            while (isActive && !finished.isCompleted) {
+            while (isActive && !finished.isCompleted && !shouldStop()) {
                 val read = recorder.read(buffer)
                 if (read < 0) {
                     finished.complete(RecognitionOutcome.Error("The microphone stopped delivering audio.", retryable = true, kind = ErrorKind.AUDIO))
@@ -289,8 +328,12 @@ class RecognitionEngine(
         reader.join()
         deadlinePassed.set(true)
         buffer.fill(0)
-        // Give the engine a moment to answer for the final seconds of audio.
-        val result = withTimeoutOrNull(FINAL_ANSWER_GRACE_MS) { finished.await() }
+        // Give the engine a moment to answer for the final seconds of audio, unless the user stopped.
+        val result = when {
+            finished.isCompleted -> finished.await()
+            shouldStop() -> null
+            else -> withTimeoutOrNull(FINAL_ANSWER_GRACE_MS) { finished.await() }
+        }
         collector.cancelAndJoin()
         stream.close()
         result ?: session.onDeadline()
@@ -299,13 +342,16 @@ class RecognitionEngine(
     private suspend fun recordClip(
         recorder: AudioCapture.Recorder,
         maxMs: Long,
+        recordOnly: Boolean,
+        shouldStop: () -> Boolean,
         onProgress: (Progress) -> Unit,
         sink: (ByteArray, Int) -> Unit,
     ) = coroutineScope {
         launch(AudioDispatcher.dispatcher) {
             val buffer = ByteArray(recorder.chunkSizeBytes)
             var bytes = 0L
-            while (isActive) {
+            var lastProgressAt = -PROGRESS_INTERVAL_MS
+            while (isActive && !shouldStop()) {
                 val read = recorder.read(buffer)
                 if (read <= 0) {
                     if (read < 0) break else continue
@@ -313,7 +359,10 @@ class RecognitionEngine(
                 sink(buffer, read)
                 bytes += read
                 val elapsed = bytes * 1_000 / recorder.bytesPerSecond
-                onProgress(Progress.Listening(elapsed, maxMs, Pcm.level(buffer, read), recorder.isSilencedByOtherApp()))
+                if (elapsed - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+                    onProgress(Progress.Listening(elapsed, maxMs, Pcm.level(buffer, read), recorder.isSilencedByOtherApp(), recordOnly))
+                    lastProgressAt = elapsed
+                }
                 if (elapsed >= maxMs) break
             }
             buffer.fill(0)
@@ -335,6 +384,12 @@ class RecognitionEngine(
         val NOT_BUNDLED = ProviderAvailability.NotConfigured(
             "This build of NanoTune does not include Apple's ShazamKit engine.",
             SetupHint.ENGINE_NOT_BUNDLED,
+        )
+
+        private val SERVER_UNREACHABLE = RecognitionOutcome.Error(
+            "Can't reach your NanoTune server right now, so its engines can't identify songs. Check your connection and try again.",
+            retryable = true,
+            kind = ErrorKind.NETWORK,
         )
 
         fun attemptOutcome(outcome: RecognitionOutcome): String = when (outcome) {
