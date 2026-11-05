@@ -16,6 +16,8 @@
 │  SettingsRepository (DataStore)          ├─ MetadataEnricher ─► MusicBrainz (ISRC) │
 │  CredentialStore (DataStore + Keystore)  └─ SyncRepository ─┐                      │
 │                                                             │                      │
+│  ClipRepository ─► ClipStore (opt-in WAV files)   ClipRecognizer ◄─ ClipRetryWorker │
+│                                                   (identify later)   (WorkManager)  │
 │  ShazamTokenSource ──────────────┐   AccountRepository ─────┤  EnhancedClient ─┐   │
 └──────────────────────────────────┼──────────────────────────┼──────────────────┼───┘
                                    │ HTTPS (Retrofit/OkHttp)  │                  │
@@ -24,10 +26,12 @@
 │  POST /shazamkit/token   – ES256 developer token (Apple .p8 key stays here)         │
 │  /auth/* , /me           – optional accounts (Argon2id, rotating refresh tokens)    │
 │  GET|PUT /sync           – LWW sync with tombstones, per-user cursor                │
-│  POST /recognition/enhanced – optional, provider router (none enabled by default)  │
-│  SQLite (SQLAlchemy + Alembic)                                                      │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+│  POST /recognition/identify – server engines as main engine (opt-in, quotas)        │
+│  POST /recognition/enhanced – fallback after a ShazamKit no-match (≥ 2 engines)     │
+│  SQLite (SQLAlchemy + Alembic)                         │ AudD / ACRCloud (owner keys)│
+└────────────────────────────────────────────────────────┼────────────────────────────┘
           Shazam catalogue (Apple) ◄── audio *signature* sent by ShazamKit on the phone
+                                                         ▼ clip (≤ 12 s) only with consent
 ```
 
 ## Android app
@@ -41,26 +45,34 @@ Single Gradle module (`android/app`) organised by layer, close to the brief's su
 | `domain/export`, `domain/history` | CSV (RFC 4180, formula-injection safe) / JSON export; day + session grouping. |
 | `recognition` | `MusicRecognitionProvider` / `StreamingRecognitionProvider` contracts; `IdentifySession` (when a tap-to-identify attempt is finished); `RecognitionEngine` (orchestration); `EnhancedGate`; `MetadataEnricher`. |
 | `recognition/shazamkit` | `ShazamTokenSource` (fetch/cache tokens), `TokenPolicy`; `ShazamKitBridge` lives in `src/shazamkit/kotlin` (real) or `src/noshazamkit/kotlin` (stub) and is selected at build time by the presence of the AAR. |
-| `recognition/enhanced` | Uploads a 16 kHz WAV clip to the server route (opt-in only). |
+| `recognition/enhanced` | Uploads a 16 kHz WAV clip to the server's engines (opt-in only): main engine (`/recognition/identify`) or fallback (`/recognition/enhanced`). |
+| `recognition/ClipRecognizer` | "Identify later" for a saved recording: ShazamKit first, then the server engines if allowed; records each attempt. |
+| `data/clips` | `ClipStore` (WAV + JSON metadata files in `filesDir/clips`, atomic writes, purge by age/size), `ClipPolicy` (what is kept), `ClipRepository` (observable list, 16 kHz storage). |
+| `feature/recordings` | History › Recordings tab: play (MediaPlayer), share (FileProvider), identify, delete. |
 | `core/audio` | `AudioCapture` (AudioRecord, UNPROCESSED/MIC, 48/44.1/32/16 kHz), `Pcm` (WAV, level meter, windowed-sinc resampler), dedicated audio thread. |
 | `core/network`, `core/security` | Connectivity (metered/unmetered), Keystore AES-GCM cipher. |
 | `data/local` | Room entities/DAOs per the brief (Track, Recognition, Favourite, ListeningSession) + sync bookkeeping (`updated_at`, `deleted_at`, `pending_sync`). |
 | `data/remote` | Retrofit API + DTOs (wire format shared with `backend/app/schemas.py`), `BackendClient` (runtime-configurable server URL, safe error mapping), `MusicBrainzClient`. |
 | `data/repository`, `data/settings`, `data/sync` | History, account (single-flight token refresh), sync (push then pull), server capabilities, DataStore settings, encrypted credentials, LWW merge rules. |
-| `service` | `ListeningSessionService` (microphone FGS), notification, session state. |
+| `service` | `ListeningSessionService` (microphone FGS), notification, session state; `ClipRetryWorker` (WorkManager, network constraint) identifies recordings captured offline. |
 | `feature/*`, `navigation`, `ui/theme` | Compose screens, type-safe navigation, theme (brand colours in one place). |
 
 Manual DI: `AppContainer` builds the graph once in `NanoTuneApp`.
 
 ### Identify flow
 
-1. Check the engine is usable **before** opening the microphone (ShazamKit bundled? server URL set? token
-   obtainable?). If not, show a setup explanation — never record for nothing.
+1. Pick the route **before** opening the microphone: ShazamKit (bundled, server reachable, token
+   obtainable), else the server's engines (user agreed to the current list), else — offline with recordings
+   and auto-retry on — capture to identify later. If nothing applies, show a setup explanation and never
+   record for nothing.
 2. Open `AudioRecord`; open a ShazamKit `StreamingSession`; feed ~100 ms chunks on a dedicated audio thread.
 3. `IdentifySession` finishes on the first match; tolerates transient errors; refreshes the token once on
    `UNAUTHORIZED`; at the deadline returns "no match" (or the last error if no attempt succeeded).
-4. Optional enhanced fallback (only if eligible) uploads the in-memory clip.
-5. Save the match (track de-duplicated by identity key), trigger enrichment and a debounced sync, wipe buffers.
+4. Server-engine route, or the optional fallback after a ShazamKit no-match: upload the in-memory clip
+   (≤ 12 s, 16 kHz).
+5. Save the match (track de-duplicated by identity key), trigger enrichment and a debounced sync.
+6. Recording: only with *Keep recordings* on, `ClipPolicy` decides whether to keep it (16 kHz WAV) or offer
+   "Keep this recording"; offline captures schedule `ClipRetryWorker`. Otherwise buffers are wiped.
 
 ### Listening session flow
 

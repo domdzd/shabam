@@ -86,8 +86,9 @@ fun PrivacyScreen(onBack: () -> Unit) = TextPage(
             "account removes your account and all cloud data from the server. Single songs and recordings can be deleted " +
             "from History.",
         "No tracking" to
-            "NanoTune contains no advertising, analytics or crash-reporting SDKs. Anonymous token requests carry a random " +
-            "per-install ID so the server can rate-limit fairly; it is not linked to you and is reset when you delete local data.",
+            "NanoTune contains no advertising, analytics or crash-reporting SDKs. Anonymous requests (tokens, and server " +
+            "engines if your server allows them) carry a random per-install ID so the server can rate-limit fairly. The " +
+            "server keeps only hashed daily counters; the ID is not linked to you and is reset when you delete local data.",
     ),
 )
 

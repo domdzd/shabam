@@ -1,15 +1,19 @@
 # Deploying the NanoTune server on a VPS
 
-The server signs ShazamKit developer tokens (required for recognition) and, optionally, hosts accounts
-and sync. It is a single small container (FastAPI + SQLite).
+The server signs ShazamKit developer tokens, can route clips to recognition engines you attach (AudD,
+ACRCloud), and optionally hosts accounts and sync. It is a single small container (FastAPI + SQLite).
 
 ## Requirements
 
 * A Linux VPS with Docker Engine and the Compose plugin (v2.24+).
 * A domain or subdomain pointing at the VPS, e.g. `api.example.com`, and HTTPS (nginx/Caddy/Traefik).
-* For recognition: an Apple Developer Program membership and a Media Services key (see
-  docs/RECOGNITION_PROVIDERS.md). Without it the server still runs (accounts/sync work) and the app
-  explains that recognition isn't configured.
+* For recognition, at least one of:
+  * an Apple Developer Program membership and a Media Services key, for ShazamKit (needs an APK built with
+    Apple's AAR), or
+  * an AudD API token and/or an ACRCloud project (works with the APK from the Releases page).
+
+  See docs/RECOGNITION_PROVIDERS.md. Without either, the server still runs (accounts/sync work) and the
+  app explains what isn't configured.
 
 ## 1. Get the code and configure
 
@@ -63,7 +67,40 @@ The proxy must forward `X-Forwarded-For`; the container trusts it (`FORWARDED_AL
 proxy can reach it. If you expose port 8000 differently, set `FORWARDED_ALLOW_IPS` to the proxy's address.
 
 Then, in the app: **Settings › NanoTune server** → `https://api.example.com` → Save. The status line
-should read "Online · ShazamKit tokens ready".
+should read "Online · ShazamKit tokens ready" (with an Apple key).
+
+## Optional: attach AudD and/or ACRCloud
+
+Both are paid services (after a trial) billed to you, so each needs an explicit switch, credentials and a
+daily cap you choose. In `.env`:
+
+```bash
+# AudD (https://dashboard.audd.io)
+AUDD_ENABLED=true
+AUDD_API_TOKEN=your-audd-token
+AUDD_DAILY_LIMIT=100            # hard cap per UTC day for the whole server; 0 = off
+
+# ACRCloud (console › your audio & video recognition project)
+ACRCLOUD_ENABLED=true
+ACRCLOUD_HOST=identify-eu-west-1.acrcloud.com   # the host shown for your project
+ACRCLOUD_ACCESS_KEY=...
+ACRCLOUD_ACCESS_SECRET=...
+ACRCLOUD_DAILY_LIMIT=100
+
+PROVIDER_ORDER=audd,acrcloud    # order in which engines are tried
+ENHANCED_PER_USER_DAILY_LIMIT=25
+
+# Only if you want people to use the engines without an account (e.g. the APK without ShazamKit):
+SERVER_RECOGNITION_ANONYMOUS=true
+SERVER_RECOGNITION_PER_INSTALL_DAILY_LIMIT=10
+SERVER_RECOGNITION_PER_IP_DAILY_LIMIT=50
+```
+
+Restart (`docker compose up -d`) and check `curl -s http://127.0.0.1:8000/api/v1/config`: the
+`server_engines` block should show `"available": true` and list the engines. Without accounts or
+`SERVER_RECOGNITION_ANONYMOUS=true` the engines aren't usable, and `message` says why. In the app, people
+then see "Your server can identify songs" and choose whether to allow uploads to the engines listed.
+Misconfigured engines (missing key or limit 0) are skipped with a warning in the logs; keys are never logged.
 
 ## Updates
 
@@ -95,7 +132,8 @@ cd deploy && docker compose up -d --build
 * One Uvicorn worker on purpose: rate limits are kept in memory.
 * Logs never contain tokens, passwords, keys or audio. Docker log rotation is configured (3 × 10 MB).
 * `RECOGNITION_KILL_SWITCH=true` disables all server-side recognition engines immediately (restart the
-  container after editing `.env`).
+  container after editing `.env`). Usage counters per engine, user, install and IP are kept per UTC day in
+  the database.
 * To close registrations: `REGISTRATION_OPEN=false`. To disable accounts entirely: `ACCOUNTS_ENABLED=false`
   (anonymous token issuance keeps working).
 * Email verification and password reset are **not implemented** (no SMTP flow yet); the app tells users that

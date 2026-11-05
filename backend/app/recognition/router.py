@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
@@ -28,10 +31,23 @@ class EnhancedOutcome:
 
 
 class EnhancedRouter:
+    #: Scope prefixes of anonymous counters; they are only needed for the current UTC day.
+    ANONYMOUS_SCOPES = ("install", "ip")
+
     def __init__(self, settings: Settings, providers: list[ProviderAdapter], shazamkit_available: bool):
         self.settings = settings
         self.providers = providers
         self.shazamkit_available = shazamkit_available
+        # Anonymous quotas are keyed by install ID and client IP. They are stored only as keyed hashes,
+        # so the database never holds raw IP addresses or install IDs. Without an account secret the key
+        # is random per process (counters then restart with the server; provider limits are unaffected).
+        secret = settings.auth_jwt_secret
+        self._scope_key = (
+            hmac.new(secret.encode(), b"nanotune-usage-scope-v1", hashlib.sha256).digest()
+            if len(secret) >= 32
+            else secrets.token_bytes(32)
+        )
+        self._purged_day: str | None = None
 
     # ---------------------------------------------------------------- availability
     def usable_providers(self) -> list[ProviderAdapter]:
@@ -83,6 +99,25 @@ class EnhancedRouter:
     def user_quota_left(self, db: Session, user_id: str) -> int:
         return self.settings.enhanced_per_user_daily_limit - self._usage(db, f"user:{user_id}").count
 
+    def anonymous_scope(self, kind: str, value: str) -> str:
+        """Quota scope for anonymous use, e.g. ``ip:<keyed hash>``; the raw value is never stored."""
+        if kind not in self.ANONYMOUS_SCOPES:
+            raise ValueError(f"unknown anonymous scope {kind!r}")
+        digest = hmac.new(self._scope_key, value.encode(), hashlib.sha256).hexdigest()[:32]
+        return f"{kind}:{digest}"
+
+    def _purge_old_anonymous_counters(self, db: Session) -> None:
+        day = self._today()
+        if self._purged_day == day:
+            return
+        db.execute(
+            delete(ProviderUsage).where(
+                or_(*(ProviderUsage.scope.startswith(f"{kind}:") for kind in self.ANONYMOUS_SCOPES)),
+                ProviderUsage.day != day,
+            )
+        )
+        self._purged_day = day
+
     # ---------------------------------------------------------------- routing
     async def identify(self, db: Session, quota_scopes: list[tuple[str, int]], clip: ClipInfo) -> EnhancedOutcome:
         """Runs the clip through the server engines.
@@ -93,6 +128,7 @@ class EnhancedRouter:
         providers = self.usable_providers()
         if not providers:
             return EnhancedOutcome("unavailable", None, [], [], self.server_unavailable_message())
+        self._purge_old_anonymous_counters(db)
         usages = [(self._usage(db, scope), limit) for scope, limit in quota_scopes]
         if any(usage.count >= limit for usage, limit in usages):
             return EnhancedOutcome("unavailable", None, [], [], "Daily recognition limit reached for this device. Try again tomorrow.")

@@ -41,14 +41,21 @@ class ClipRecognizer(
             var engine = ""
             if (primary != null && primary.availability() == ProviderAvailability.Ready) {
                 engine = RecognitionEngine.SHAZAM_LABEL
-                outcome = primary.identify(AudioSample(pcm, rate, durationMs = pcm.size * 1_000L / (rate * 2)))
-                clips.recordAttempt(clipId, ClipAttempt(System.currentTimeMillis(), engine, RecognitionEngine.attemptOutcome(outcome)), null)
+                // Query signatures are kept short (as when listening live); the engine gets its own copy.
+                val length = evenPrefix(pcm.size, rate, MAX_SIGNATURE_SECONDS)
+                val sample = AudioSample(pcm.copyOf(length), rate, durationMs = length * 1_000L / (rate * 2))
+                outcome = try {
+                    primary.identify(sample)
+                } finally {
+                    sample.clear()
+                }
+                if (outcome !is RecognitionOutcome.Match) recordAttempt(clipId, engine, outcome)
             }
             if (outcome !is RecognitionOutcome.Match && gate.primaryEligible()) {
                 engine = gate.providerNames()
-                val upload = minOf(pcm.size, rate * 2 * gate.maxUploadSeconds())
-                outcome = enhanced.identify(pcm, upload - upload % 2, rate, EnhancedRecognitionClient.Mode.PRIMARY)
-                clips.recordAttempt(clipId, ClipAttempt(System.currentTimeMillis(), engine, RecognitionEngine.attemptOutcome(outcome)), null)
+                val upload = evenPrefix(pcm.size, rate, gate.maxUploadSeconds())
+                outcome = enhanced.identify(pcm, upload, rate, EnhancedRecognitionClient.Mode.PRIMARY)
+                if (outcome !is RecognitionOutcome.Match) recordAttempt(clipId, engine, outcome)
             }
             return when (outcome) {
                 null -> Result.NoEngine(
@@ -83,5 +90,19 @@ class ClipRecognizer(
         } finally {
             pcm.fill(0)
         }
+    }
+
+    private suspend fun recordAttempt(clipId: String, engine: String, outcome: RecognitionOutcome) {
+        clips.recordAttempt(clipId, ClipAttempt(System.currentTimeMillis(), engine, RecognitionEngine.attemptOutcome(outcome)), null)
+    }
+
+    /** Byte length of at most [seconds] of 16-bit mono audio, rounded down to whole samples. */
+    private fun evenPrefix(size: Int, rate: Int, seconds: Int): Int {
+        val length = minOf(size, rate * 2 * seconds)
+        return length - length % 2
+    }
+
+    private companion object {
+        const val MAX_SIGNATURE_SECONDS = 12
     }
 }

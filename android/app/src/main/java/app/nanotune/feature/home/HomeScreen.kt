@@ -114,8 +114,10 @@ fun HomeScreen(
     val onTap: () -> Unit = {
         when {
             listening -> viewModel.cancel()
-            // If no engine can run, explain what's missing without asking for the microphone.
-            engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING -> viewModel.identify()
+            // If no engine can run, explain what's missing without asking for the microphone — unless the
+            // recording can be kept and identified once the server is reachable again.
+            engine != EngineStatus.READY && engine != EngineStatus.READY_SERVER && engine != EngineStatus.CHECKING &&
+                !(engine == EngineStatus.SERVER_OFFLINE && keepsRecordings) -> viewModel.identify()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> viewModel.identify()
             else -> showRationale = true
         }
@@ -343,11 +345,13 @@ private fun EngineSetupBanner(status: EngineStatus, onOpenSettings: () -> Unit) 
     val (title, body) = when (status) {
         EngineStatus.NOT_BUNDLED -> "Recognition engine not included" to
             "This APK was built without Apple's ShazamKit library, which Apple only distributes to signed-in developers. " +
-            "Everything else works; to identify songs, build NanoTune with the ShazamKit AAR (see the project README)."
+            "To identify songs, connect a NanoTune server that offers recognition engines (AudD or ACRCloud), or build " +
+            "NanoTune with the ShazamKit AAR (see the project README)."
         EngineStatus.NO_SERVER -> "Connect your NanoTune server" to
             "ShazamKit needs a short-lived developer token that your own NanoTune server signs. Add the server address in Settings."
         EngineStatus.SERVER_OFFLINE -> "Server unreachable" to
-            "NanoTune can't reach your server right now, so it can't get a recognition token. Check your connection or the server."
+            "NanoTune can't reach your server right now, so it can't identify songs. Check your connection or the server. " +
+            "With Settings › Recordings on, a tap keeps the clip and identifies it once you're back online."
         EngineStatus.SERVER_NOT_CONFIGURED -> "Server has no Apple key yet" to
             "Your NanoTune server is running but has no Apple Media Services key configured, so it can't sign ShazamKit tokens."
         else -> return
@@ -421,7 +425,7 @@ private fun ServerEnginesConsent(providers: List<ProviderInfoDto>, onAllow: () -
     InfoBanner(
         icon = Icons.Filled.Dns,
         title = "Your server can identify songs",
-        body = "This build has no on-device engine, but your NanoTune server offers $names. That means uploading a short clip — you decide.",
+        body = "Your NanoTune server offers $names for identifying songs. Using it means uploading a short clip, so you decide.",
         action = { TextButton(onClick = { showDialog = true }) { Text("Review and allow") } },
     )
 }

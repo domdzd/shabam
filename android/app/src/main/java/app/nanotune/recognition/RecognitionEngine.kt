@@ -79,13 +79,31 @@ class RecognitionEngine(
         val maxMs = prefs.manualListenSeconds * 1_000L
         val availability = primaryAvailability()
         val primaryReady = availability is ProviderAvailability.Ready && primary != null
+        // Without a ready on-device engine the server's engines decide; make sure we know what it offers now.
+        if (!primaryReady) enhancedGate.ensureFresh()
         val serverPrimary = !primaryReady && enhancedGate.primaryEligible()
         val fallback = primaryReady && enhancedGate.fallbackEligible()
-        val couldIdentifyLater = primary != null || (prefs.enhancedEnabled && prefs.enhancedConsentAt != null)
+        val serverConsented = enhancedGate.consentGiven(prefs)
+        // The engine that would answer can't be reached right now (offline or server down).
+        val engineUnreachable = if (primary != null) {
+            availability is ProviderAvailability.Unavailable && availability.retryable
+        } else {
+            serverConsented && enhancedGate.serverUnreachable()
+        }
+        val couldIdentifyLater = primary != null || serverConsented
         val offlineCapture = !primaryReady && !serverPrimary && prefs.saveRecordings && prefs.retryRecordingsOnline &&
-            availability is ProviderAvailability.Unavailable && availability.retryable && couldIdentifyLater
+            engineUnreachable && couldIdentifyLater
 
         if (!primaryReady && !serverPrimary && !offlineCapture) {
+            if (primary == null && engineUnreachable) {
+                return Result(
+                    RecognitionOutcome.Error(
+                        "Can't reach your NanoTune server right now, so its engines can't identify songs. Check your connection and try again.",
+                        retryable = true,
+                        kind = ErrorKind.NETWORK,
+                    ),
+                )
+            }
             return Result(
                 availability.asOutcome(),
                 setupHint = (availability as? ProviderAvailability.NotConfigured)?.hint,

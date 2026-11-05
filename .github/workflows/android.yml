@@ -30,6 +30,8 @@ jobs:
     name: Build, test and package
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      version: ${{ steps.collect.outputs.version }}
     defaults:
       run:
         working-directory: android
@@ -107,9 +109,11 @@ jobs:
         run: cat app/build/reports/lint-results-debug.txt 2>/dev/null | tail -n 150 || true
 
       - name: Collect APKs
+        id: collect
         run: |
           mkdir -p ../dist
           VERSION=$(grep -m1 'val appVersionName' app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           cp app/build/outputs/apk/release/app-release.apk "../dist/NanoTune-${VERSION}-build${GITHUB_RUN_NUMBER}.apk"
           cp app/build/outputs/apk/debug/app-debug.apk "../dist/NanoTune-${VERSION}-build${GITHUB_RUN_NUMBER}-debug.apk"
           (cd ../dist && sha256sum *.apk | tee SHA256SUMS.txt)
@@ -148,9 +152,9 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v0.1.0-build.{0}', github.run_number) }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}-build.{1}', needs.build.outputs.version, github.run_number) }}
           target_commitish: ${{ github.sha }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('NanoTune 0.1.0 (build {0})', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('NanoTune {0} (build {1})', needs.build.outputs.version, github.run_number) }}
           prerelease: true
           files: |
             dist/*.apk
@@ -161,6 +165,8 @@ jobs:
             * `NanoTune-*-buildN.apk` — optimised release build (install this one).
             * `NanoTune-*-debug.apk` — debuggable build for troubleshooting.
 
-            Music recognition needs the ShazamKit engine and a NanoTune server — see
-            docs/RECOGNITION_PROVIDERS.md and docs/DEPLOYMENT.md. Builds made without the Apple
-            ShazamKit AAR show "ShazamKit not included in this build" instead of identifying songs.
+            Music recognition needs a NanoTune server plus an engine: Apple's ShazamKit (needs the
+            ShazamKit AAR in the build and an Apple developer key on the server) or the engines your
+            server offers (AudD / ACRCloud with your own keys). See docs/RECOGNITION_PROVIDERS.md and
+            docs/DEPLOYMENT.md. Without either, the app explains what is missing instead of identifying
+            songs. What's new: CHANGELOG.md.

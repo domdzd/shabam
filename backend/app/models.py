@@ -92,7 +92,7 @@ class ProviderUsage(Base):
     __table_args__ = (UniqueConstraint("scope", "day", name="uq_provider_usage"),)
 
     pk: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    #: ``provider:<id>`` or ``user:<user id>``
+    #: ``provider:<id>``, ``user:<user id>``, or ``install:``/``ip:`` + keyed hash (anonymous, current day only)
     scope: Mapped[str] = mapped_column(String(120), index=True)
     day: Mapped[str] = mapped_column(String(10))
     count: Mapped[int] = mapped_column(Integer, default=0)

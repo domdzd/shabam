@@ -1,6 +1,6 @@
 # Recognition providers — findings, setup and limitations
 
-_Research date: 2026-11-04. Everything marked **verified** was read from the official source in
+_Research date: 2026-11-04 (server engines: 0.2.0)._ Everything marked **verified** was read from the official source in
 this session; anything not verifiable is labelled as such._
 
 ## Summary
@@ -9,12 +9,15 @@ this session; anything not verifiable is labelled as such._
 |---|---|---|---|---|
 | **Apple ShazamKit for Android** (Shazam catalogue) | Primary engine, on device | Apple Developer Program, **99 USD/year**; no per-request fee is documented | Yes (designed for it) | Integrated; compiled when you add Apple's AAR; **not run** here (no AAR/key/device) |
 | AcoustID + Chromaprint | Considered as free fallback | Free for non-commercial use (per the brief) | **No** — see analysis | Rejected; not implemented |
-| AudD, ACRCloud, other paid APIs | Optional server-side "enhanced" engines | Paid / trial | Yes | Not integrated (brief forbids paid providers in the first release); plug-in point exists |
+| **AudD** | Optional server engine (main engine without ShazamKit, identify later, fallback) | Paid; trial credits on sign-up | Yes | **Integrated (0.2.0)**, off by default; verified against AudD's official Go SDK; not run with a live key |
+| **ACRCloud** | Optional server engine (same roles) | Paid; free trial | Yes | **Integrated (0.2.0)**, off by default; verified against ACRCloud's official examples; not run with a live key |
 | Unofficial/reverse-engineered Shazam endpoints | — | — | — | Deliberately **not** used: not authorised by Apple |
 
 There is no legitimate, free, key-less service that identifies arbitrary songs from a microphone
 clip. A catalogue of millions of fingerprints is required, and the official free-per-request route
-is ShazamKit, which requires a paid Apple Developer Program membership.
+is ShazamKit, which requires a paid Apple Developer Program membership. Since 0.2.0 the owner can
+instead (or additionally) attach **AudD** or **ACRCloud** on the server with their own keys; the APK from
+the Releases page then identifies songs without ShazamKit.
 
 ## Apple ShazamKit for Android
 
@@ -145,34 +148,92 @@ The project brief suggested AcoustID as a free fallback. It was rejected after a
   <https://acoustid.org/webservice> before revisiting this decision; a possible honest use would be a
   future "identify an audio file" feature, not microphone recognition.
 
-## Paid engines (AudD, ACRCloud, …) — not integrated
+## Server engines: AudD and ACRCloud (0.2.0, off by default)
 
-* The brief forbids paid providers in the initial release and requires, before enabling one: an explicit
-  flag, a documented cost/limit, quotas, a kill switch and user disclosure.
-* Their API documentation (docs.audd.io, docs.acrcloud.com) was **blocked** in the build sandbox, so no
-  adapter was written: the brief says not to fabricate APIs.
-* The backend already provides everything an adapter needs: `ProviderAdapter` protocol
-  (`backend/app/recognition/base.py`), registry (`registry.py`), routing with per-provider and per-user
-  daily quotas, timeouts, kill switch (`RECOGNITION_KILL_SWITCH`), fallback/consensus modes and
-  reconciliation with provenance (`router.py`, `reconcile.py`), strict WAV validation (`audio.py`), and an
-  authenticated upload route. The app shows the server's disclosure text and asks for consent first.
+Both adapters live in `backend/app/recognition/providers/`. The providers' documentation sites were
+**blocked** in the build sandbox, so each adapter was written against, and checked with, the provider's
+**own published code** on GitHub (read in this session). Neither was run against the live service: no key
+was available, and the brief forbids live keys in automated tests. The tests use recorded response shapes
+through `httpx.MockTransport`.
 
-### Adding a provider adapter
+### AudD (verified against `AudDMusic/audd-go`, the official Go SDK)
 
-1. Read the provider's current API docs and terms; get a key; note the price and set a hard daily limit.
+* Request: `POST https://api.audd.io/` as `multipart/form-data` with `api_token`, the audio as `file`,
+  and optional `return` (NanoTune sends `apple_music,spotify` by default, `AUDD_RETURN`).
+* Response: `{"status": "success" | "error", "result": {...} | null, "error": {"error_code", "error_message"}}`.
+  `result: null` means no match. Fields used: `artist`, `title`, `album` and `release_date` (falling back
+  to `apple_music.albumName` / `releaseDate`), `isrc` (top level or `apple_music.isrc`), Apple Music
+  artwork (`{w}x{h}` → 600×600), `apple_music.url`, `spotify.id` (→ an `open.spotify.com` link) and
+  `song_link`, whose thumbnail (`?thumb`) is the fallback artwork. AudD reports no confidence score.
+* Error codes are mapped by class, as in the SDK: 900/901/903 bad token (not retried), 902 quota
+  exhausted, 904/905 subscription problems, 300/400/500 unreadable audio, 611 rate limited (retry later),
+  19/31337 blocked, 20 client needs an update, the rest invalid request. Code 51 ("deprecated parameter")
+  with a result still counts as a match.
+* AudD analyses only the **first 12 seconds** of a file, which matches NanoTune's 12-second upload cap.
+* Settings: `AUDD_ENABLED=true`, `AUDD_API_TOKEN=…` (from the AudD dashboard), `AUDD_DAILY_LIMIT=<n>`
+  (a hard cap you choose; 0 keeps it off), `AUDD_RETURN`.
+
+### ACRCloud (verified against `acrcloud/webapi_example` and `acrcloud/acrcloud_scan_files_python`)
+
+* Identify Protocol V1: `POST https://<your project host>/v1/identify` (the host is shown in the ACRCloud
+  console, e.g. `identify-eu-west-1.acrcloud.com`) with form fields `access_key`, `sample_bytes`,
+  `timestamp`, `signature`, `data_type=audio`, `signature_version=1` and the audio as file `sample`.
+* Signature: `base64(HMAC-SHA1(access_secret, "POST\n/v1/identify\n<access_key>\naudio\n1\n<timestamp>"))`
+  (a test checks it against an independent implementation of the published formula).
+* Response: `status.code` 0 = match, **1001 = no result**, other codes = error (2000–3999 are client or
+  credential problems and are not retried). The best match is `metadata.music[0]`: `title`,
+  `artists[].name`, `album.name`, `release_date`, `score` (0–100, shown as confidence), `external_ids.isrc`
+  (a string or a list), `external_metadata.spotify.track.id`, `external_metadata.youtube.vid`, `acrid`.
+* `ACRCLOUD_HOST` must be a bare host name (a leading `https://` and a trailing `/` are stripped; anything
+  with a path, port or other characters is rejected), and requests always go to `https://<host>/v1/identify`.
+  Double-check it against the console, since the clip is sent to that host.
+* Settings: `ACRCLOUD_ENABLED=true`, `ACRCLOUD_HOST`, `ACRCLOUD_ACCESS_KEY`, `ACRCLOUD_ACCESS_SECRET`,
+  `ACRCLOUD_DAILY_LIMIT=<n>`.
+
+### How the app uses server engines
+
+* **Off unless the owner turns them on**: an engine is registered only with `*_ENABLED=true`, credentials
+  **and** a positive `*_DAILY_LIMIT`. `PROVIDER_ORDER` (default `audd,acrcloud`) sets the order.
+  `RECOGNITION_KILL_SWITCH=true` disables all of them at once.
+* `/api/v1/config` lists the usable engines under `server_engines` (with their disclosure text). The app
+  shows them by name and asks for consent. The consent is stored together with the exact list of engine
+  IDs, and the app asks again if the list changes.
+* **Main engine**: `POST /api/v1/recognition/identify`. Used when the build has no ShazamKit (or ShazamKit
+  isn't usable) and for *Identify* on saved recordings. Signed-in users count against
+  `ENHANCED_PER_USER_DAILY_LIMIT`. Anonymous use is allowed only with `SERVER_RECOGNITION_ANONYMOUS=true`,
+  capped by `SERVER_RECOGNITION_PER_INSTALL_DAILY_LIMIT` and `SERVER_RECOGNITION_PER_IP_DAILY_LIMIT`.
+* **Fallback ("enhanced")**: `POST /api/v1/recognition/enhanced`, for signed-in users after ShazamKit found
+  no match, only when there are **at least two** engines in total, ShazamKit included (`ENHANCED_MODE=fallback` tries them in order,
+  `consensus` asks all of them and reports agreement).
+* Clips are at most `ENHANCED_MAX_UPLOAD_SECONDS` (≤ 12) of 16 kHz mono WAV, validated by the server,
+  processed in memory and never stored. Each engine call has a timeout (`ENHANCED_PROVIDER_TIMEOUT_SECONDS`).
+
+### Cost and terms (check before enabling)
+
+* Both services are **paid** after their trial; prices and trial sizes change, so check the providers'
+  current pricing pages. The daily limits are the safety net: when one is reached, that engine is skipped
+  until the next UTC day.
+* Read each provider's terms on caching and displaying results before you distribute the app to others.
+* **ShazamKit licence**: Apple forbids using ShazamKit data to improve or create another recognition service
+  and comparing it with other services for that purpose. NanoTune sends **only the audio clip** to server
+  engines, only after ShazamKit returned no match (or when there is no ShazamKit), and never sends
+  ShazamKit results anywhere. Keep it that way.
+
+### Adding another provider
+
+1. Read the provider's current API docs and terms (or its official SDK if the docs are unreachable); get a
+   key; note the price and choose a hard daily limit.
 2. Implement `ProviderAdapter` (`id`, `name`, `paid`, `disclosure`, `daily_limit`, `async identify(clip)`)
-   using `httpx.AsyncClient`, mapping "no result" to `None` and outages to `ProviderError`.
-3. Add `<NAME>_ENABLED`, `<NAME>_API_KEY`, `<NAME>_DAILY_LIMIT` settings (default disabled, limit 0) and
-   register the adapter in `build_providers()` only when enabled with a positive limit.
-4. Write tests with recorded/mocked responses — **never live keys in automated tests**.
-5. Enhanced mode becomes available automatically when ShazamKit token signing plus at least one server
-   engine are usable (≥ 2 engines), accounts are enabled and the kill switch is off.
+   with `httpx.AsyncClient`, mapping "no result" to `None` and outages to `ProviderError`.
+3. Add `<NAME>_ENABLED`, credentials and `<NAME>_DAILY_LIMIT` settings (default disabled, limit 0) and
+   register the adapter in `build_providers()` only when it is fully configured.
+4. Write tests with recorded or mocked responses. **Never use live keys in automated tests.**
 
 ## MusicBrainz / Cover Art Archive (metadata enrichment)
 
 * Used only to add album, release date and duration (by ISRC) and a fallback cover image. Optional,
   "Wi-Fi only" switch, cached per track, at most one request per second, User-Agent
-  `NanoTune/0.1.0 ( https://github.com/domdzd/shabam )` (configurable via `nanotune.musicBrainzContact`).
+  `NanoTune/<version> ( https://github.com/domdzd/shabam )` (configurable via `nanotune.musicBrainzContact`).
 * The brief states non-commercial API use is free and asks for ≤ 1 request/second with a meaningful
   User-Agent. The MusicBrainz documentation could **not be fetched** from the build sandbox; the client
   uses the long-standing `/ws/2/isrc/{isrc}?inc=releases&fmt=json` lookup and Cover Art Archive

@@ -2,6 +2,7 @@ package app.nanotune.recognition
 
 import app.nanotune.data.remote.dto.ProviderInfoDto
 import app.nanotune.data.repository.ServerRepository
+import app.nanotune.data.repository.ServerState
 import app.nanotune.data.settings.AppSettings
 import app.nanotune.data.settings.CredentialStore
 import app.nanotune.data.settings.SettingsRepository
@@ -44,6 +45,19 @@ class EnhancedGate(
 
     fun providers(): List<ProviderInfoDto> = server.currentConfig()?.serverEngines?.providers.orEmpty()
 
+    /** The user agreed to server engines at some point (the list may have changed since). */
+    fun consentGiven(prefs: AppSettings): Boolean = prefs.enhancedEnabled && prefs.enhancedConsentAt != null
+
+    /** Re-checks the server when the last known state is not "online" or is older than [maxAgeMs]. */
+    suspend fun ensureFresh(maxAgeMs: Long = FRESH_MS, now: Long = System.currentTimeMillis()) {
+        val state = server.state.value
+        if (state is ServerState.NotConfigured) return
+        if (state !is ServerState.Online || now - state.checkedAt > maxAgeMs) server.refresh()
+    }
+
+    /** The configured server could not be reached (or answered with an error) at the last check. */
+    fun serverUnreachable(): Boolean = server.state.value is ServerState.Offline
+
     fun providerNames(): String = providers().joinToString(" + ") { it.name }.ifEmpty { "your server's engines" }
 
     fun maxUploadSeconds(): Int = (server.currentConfig()?.serverEngines?.maxUploadSeconds ?: DEFAULT_MAX_UPLOAD_SECONDS)
@@ -54,6 +68,7 @@ class EnhancedGate(
 
     companion object {
         const val DEFAULT_MAX_UPLOAD_SECONDS = 12
+        private const val FRESH_MS = 10 * 60_000L
 
         fun consentKey(providers: List<ProviderInfoDto>): String = providers.map { it.id }.sorted().joinToString(",")
     }

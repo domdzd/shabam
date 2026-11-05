@@ -57,8 +57,8 @@ async def identify(
         if install is None:
             raise ApiError(400, "install_id_required", "This app version did not identify itself.")
         scopes = [
-            (f"install:{install}", settings.server_recognition_per_install_daily_limit),
-            (f"ip:{client_ip(request)}", settings.server_recognition_per_ip_daily_limit),
+            (engine.anonymous_scope("install", install), settings.server_recognition_per_install_daily_limit),
+            (engine.anonymous_scope("ip", client_ip(request)), settings.server_recognition_per_ip_daily_limit),
         ]
     else:
         raise ApiError(401, "unauthorized", "Sign in to use this server's recognition engines.")

@@ -4,15 +4,23 @@ A lightweight, privacy-first Android app that identifies the music playing aroun
 discovery history, and can run user-started listening sessions that log every new song. Free to use, no
 account required, no ads or trackers. Optional accounts back up and sync history through your own server.
 
-> **Status (0.1.0):** the app, backend, CI and docs are complete and build/test green. Music recognition uses
-> Apple's official **ShazamKit for Android**, which needs two things only you can get from Apple: the SDK file
-> (AAR) and an Apple Developer Program membership for the signing key. Until you add them the app works
-> fully (history, sessions UI, export, accounts) but tells you plainly that the recognition engine isn't
-> set up. Nothing is faked. Details: [docs/RECOGNITION_PROVIDERS.md](docs/RECOGNITION_PROVIDERS.md).
+> **Status (0.2.0):** the app, backend, CI and docs build and test green. Recognition needs an engine that
+> only you can switch on, because no legitimate free, key-less one exists:
+> * **AudD or ACRCloud** on your NanoTune server, with your own key and a daily limit. This works with the
+>   APK from the Releases page.
+> * **Apple ShazamKit**, which needs Apple's SDK file (AAR) in the build and an Apple Developer Program
+>   membership for the signing key.
+>
+> Until one is set up, the app works fully (history, recordings, sessions UI, export, accounts) and tells you
+> plainly what is missing. Nothing is faked. Details: [docs/RECOGNITION_PROVIDERS.md](docs/RECOGNITION_PROVIDERS.md).
 
 ## Features
 
-* **Tap to identify**: streams microphone audio to ShazamKit and stops at the first match (≤ 20 s).
+* **Tap to identify**: streams microphone audio to ShazamKit and stops at the first match (≤ 20 s), or
+  uses your server's engines (AudD / ACRCloud) after you agree to them by name.
+* **Saved recordings** (opt-in): keep the audio of songs that weren't identified (or of every
+  identification) to play, share or **identify later**. Offline? The clip is kept and identified
+  automatically when you're back online, and you get a notification.
 * **Listening sessions**: start/pause/stop, persistent notification with a Stop button, continuous or
   battery-saving interval mode, duplicate-free timeline.
 * **History**: grouped by day and session, search, date/favourite filters, favourites, delete, CSV/JSON export.
@@ -20,32 +28,42 @@ account required, no ads or trackers. Optional accounts back up and sync history
   Shazam, YouTube and Spotify search, share.
 * **Optional account**: history/favourites/settings sync, delete account and cloud data.
 * **Honest results**: "No match" instead of guesses; providers are named on every result.
-* **Privacy**: audio is processed in memory and never stored; see [docs/PRIVACY.md](docs/PRIVACY.md).
+* **Privacy**: by default audio is processed in memory and never stored; recordings and uploads to server
+  engines happen only after explicit consent. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Download
 
-Prebuilt APKs are published on this repository's **Releases** page (`NanoTune-0.1.0-buildN.apk`, Android 8.0+).
+Prebuilt APKs are published on this repository's **Releases** page (`NanoTune-0.2.0-buildN.apk`, Android 8.0+).
 Those builds are made by GitHub Actions **without** Apple's ShazamKit AAR (Apple doesn't allow redistributing
-it), so they can't identify songs yet — see "Turn on recognition" below.
+it). They identify songs once your server offers AudD or ACRCloud (option A below); otherwise they explain
+what is missing.
 
 ## Turn on recognition (owner steps)
 
-1. **Apple**: join the Apple Developer Program (99 USD/year). Download the *ShazamKit SDK for Android* AAR
-   from Apple, create a **Media ID** with ShazamKit enabled, then a **Media Services key** (`.p8`) — steps in
-   [docs/RECOGNITION_PROVIDERS.md](docs/RECOGNITION_PROVIDERS.md).
-2. **Server**: deploy the backend on your VPS with the key ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) —
-   `docker compose up -d --build` plus an HTTPS reverse proxy.
-3. **App**: build with the AAR (`android/app/libs/shazamkit-android-release.aar`, then
-   `./gradlew assembleRelease`, or let CI fetch it from a private URL —
-   [docs/RELEASE.md](docs/RELEASE.md)), install, and set **Settings › NanoTune server** to your URL.
+First deploy the backend on your VPS ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)): `docker compose up -d --build`
+plus an HTTPS reverse proxy. Then set **Settings › NanoTune server** in the app to your URL and choose:
 
-The Apple key stays on your server; the app only ever receives short-lived tokens.
+**A. AudD and/or ACRCloud (quickest; works with the Releases APK).** Both are paid after a trial. Get a key,
+put it in the server's `.env` with a daily limit (`AUDD_ENABLED`, `AUDD_API_TOKEN`, `AUDD_DAILY_LIMIT`, or the
+`ACRCLOUD_*` equivalents), and set `SERVER_RECOGNITION_ANONYMOUS=true` if people shouldn't need an account.
+The app then shows "Your server can identify songs" and asks each user before uploading a clip (≤ 12 s).
+
+**B. Apple ShazamKit (on-device signatures, no per-request fee).**
+1. Join the Apple Developer Program (99 USD/year). Download the *ShazamKit SDK for Android* AAR, create a
+   **Media ID** with ShazamKit enabled, then a **Media Services key** (`.p8`). Steps are in
+   [docs/RECOGNITION_PROVIDERS.md](docs/RECOGNITION_PROVIDERS.md).
+2. Put the key on the server (`APPLE_TEAM_ID`, `APPLE_KEY_ID`, `deploy/secrets/apple_media_services.p8`).
+3. Build the app with the AAR (`android/app/libs/shazamkit-android-release.aar`, then
+   `./gradlew assembleRelease`, or let CI fetch it from a private URL; see [docs/RELEASE.md](docs/RELEASE.md)).
+
+You can use both: ShazamKit first, and your server's engines for saved recordings or as a fallback. Keys
+stay on your server; the app only receives short-lived tokens and never holds provider keys.
 
 ## Repository layout
 
 ```
 android/   Kotlin + Jetpack Compose app (AGP 9.5, Kotlin 2.4, min SDK 26, target SDK 37)
-backend/   FastAPI service: ShazamKit token signing, accounts, sync, optional enhanced routing
+backend/   FastAPI service: ShazamKit token signing, accounts, sync, optional AudD/ACRCloud routing
 deploy/    Docker Compose, nginx / Caddy / Traefik examples, backup script
 docs/      Architecture, providers, privacy, compatibility, deployment, testing, release
 Project.md The original project brief
@@ -69,7 +87,7 @@ The debug app can reach a local server at `http://10.0.2.2:8000` (emulator) or y
 
 ## Documentation
 
-* [Implementation plan & status](docs/IMPLEMENTATION_PLAN.md)
+* [Implementation plan & status](docs/IMPLEMENTATION_PLAN.md) · [Roadmap / next steps](docs/ROADMAP.md)
 * [Architecture](docs/ARCHITECTURE.md)
 * [Recognition providers, Apple setup, licence notes](docs/RECOGNITION_PROVIDERS.md)
 * [Android compatibility](docs/ANDROID_COMPATIBILITY.md)

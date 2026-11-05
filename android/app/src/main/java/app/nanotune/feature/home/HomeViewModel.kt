@@ -87,10 +87,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         flowOf(container.recognitionEngine.engineBundled),
         container.settingsRepository.settings,
         container.credentialStore.account,
-    ) { server, bundled, _, _ ->
+    ) { server, bundled, prefs, _ ->
+        val gate = container.enhancedGate
         when {
-            !bundled && container.enhancedGate.primaryEligible() -> EngineStatus.READY_SERVER
-            !bundled && container.enhancedGate.consentNeeded() -> EngineStatus.SERVER_CONSENT_NEEDED
+            !bundled && gate.primaryEligible() -> EngineStatus.READY_SERVER
+            !bundled && gate.consentNeeded() -> EngineStatus.SERVER_CONSENT_NEEDED
+            // Agreed to the server's engines before: an unreachable server is "offline", not "no engine".
+            !bundled && gate.consentGiven(prefs) && server is ServerState.Offline -> EngineStatus.SERVER_OFFLINE
+            !bundled && server is ServerState.Checking -> EngineStatus.CHECKING
             !bundled -> EngineStatus.NOT_BUNDLED
             server is ServerState.NotConfigured -> EngineStatus.NO_SERVER
             server is ServerState.Checking -> EngineStatus.CHECKING
@@ -193,7 +197,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     override fun onCleared() {
         discardPendingClip()
-        super.onCleared()
     }
 
     /** Called when the app goes to the background: Android would silence the mic anyway. */

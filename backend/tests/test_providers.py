@@ -11,8 +11,10 @@ import json
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app.config import Settings
+from app.models import ProviderUsage
 from app.recognition.base import ClipInfo, ProviderError
 from app.recognition.providers import acrcloud, audd
 from app.recognition.providers.acrcloud import ACRCloudProvider
@@ -283,3 +285,47 @@ def test_identify_unavailable_without_engines(client):
     response = upload(client, INSTALL)
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "server_engines_unavailable"
+
+
+# ------------------------------------------------------------------ privacy of usage counters
+
+def usage_rows(client) -> list[tuple[str, str, int]]:
+    with client.app.state.database.session_factory() as db:
+        return [(row.scope, row.day, row.count) for row in db.scalars(select(ProviderUsage))]
+
+
+def test_anonymous_counters_store_no_raw_install_id_or_ip(make_client):
+    client = make_client(providers=[audd_with(AUDD_MATCH)], server_recognition_anonymous=True)
+    assert upload(client, INSTALL).json()["outcome"] == "match"
+    scopes = [scope for scope, _day, _count in usage_rows(client)]
+    assert "provider:audd" in scopes
+    assert len([s for s in scopes if s.startswith(("install:", "ip:"))]) == 2
+    for scope in scopes:
+        assert "install-1111-2222" not in scope and "testclient" not in scope
+    # The same install maps to the same (hashed) counter, so the cap still works.
+    assert upload(client, INSTALL).json()["outcome"] == "match"
+    assert len([s for s, _d, _c in usage_rows(client) if s.startswith("install:")]) == 1
+
+
+def test_old_anonymous_counters_are_purged_but_provider_totals_kept(make_client):
+    client = make_client(providers=[audd_with(AUDD_MATCH)], server_recognition_anonymous=True)
+    with client.app.state.database.session_factory() as db:
+        db.add_all([
+            ProviderUsage(scope="ip:0123456789abcdef", day="2000-01-01", count=3),
+            ProviderUsage(scope="install:0123456789abcdef", day="2000-01-01", count=2),
+            ProviderUsage(scope="provider:audd", day="2000-01-01", count=7),
+        ])
+        db.commit()
+    assert upload(client, INSTALL).json()["outcome"] == "match"
+    old = [row for row in usage_rows(client) if row[1] == "2000-01-01"]
+    assert old == [("provider:audd", "2000-01-01", 7)]
+
+
+def test_account_deletion_removes_the_users_usage_counters(make_client):
+    client = make_client(providers=[audd_with(AUDD_MATCH)])
+    tokens = register(client)
+    assert upload(client, auth(tokens)).json()["outcome"] == "match"
+    assert any(scope.startswith("user:") for scope, _d, _c in usage_rows(client))
+    deleted = client.request("DELETE", "/api/v1/me", headers=auth(tokens), json={"password": "correct horse battery"})
+    assert deleted.status_code == 204
+    assert not any(scope.startswith("user:") for scope, _d, _c in usage_rows(client))

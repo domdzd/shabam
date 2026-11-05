@@ -4,9 +4,9 @@
 
 | Suite | Command | Where it runs | Latest result |
 |---|---|---|---|
-| Backend (pytest, 52 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **52 passed** (local, Python 3.13; CI green) |
+| Backend (pytest, 73 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **73 passed** (local, Python 3.13; CI green) |
 | Backend Docker smoke test | builds the image, runs it read-only, checks health/config/token 503/register | `backend.yml` | **Passed** |
-| Android unit tests (JUnit + Robolectric) | `cd android && ./gradlew testDebugUnitTest` | `android.yml` (count printed in the "Unit test summary" step) | **Passed** |
+| Android unit tests (JUnit + Robolectric, 43 tests) | `cd android && ./gradlew testDebugUnitTest` | `android.yml` (count printed in the "Unit test summary" step) | **Passed** (CI run 7) |
 | Android lint | `./gradlew lintDebug` | `android.yml` | **0 errors** (remaining warnings are intentional dependency pins and debug-only network config) |
 
 ### What the backend tests cover
@@ -18,8 +18,14 @@ login/registration rate limits; closed registration; accounts disabled without a
 removes all cloud data; sync round-trip, last-writer-wins, tombstones, account isolation, pagination without
 gaps, batch and quota limits, field validation; enhanced routing: availability rules (needs ≥ 2 engines),
 kill switch, auth, fallback vs. consensus, agreement/conflict reporting, provider errors/timeouts/no-match,
-per-provider and per-user daily limits, WAV validation; concurrent pushes get unique, ordered sequence numbers; migrations create the schema. Providers in these tests
-are in-process fakes — no live API is ever called.
+per-provider and per-user daily limits, WAV validation; concurrent pushes get unique, ordered sequence numbers; migrations create the schema.
+**AudD and ACRCloud adapters** (0.2.0) against `httpx.MockTransport`: exact request format (AudD multipart
+fields; ACRCloud form fields and HMAC-SHA1 signature checked against the published formula), match parsing
+(ISRC, artwork, Apple Music / Spotify / YouTube links, scores), no-match, AudD error-code classes, ACRCloud
+status codes, transport failures (bad gateway, connection errors), host validation; the registry only builds fully configured
+engines in `PROVIDER_ORDER`; `/recognition/identify` without ShazamKit, anonymous use only with the owner's
+opt-in and an install ID, per-install and per-IP caps, anonymous counters stored only as keyed hashes and
+purged after the day, account deletion removing usage counters. No live API is ever called.
 
 ### What the Android tests cover
 `DuplicateFilter` (sliding cooldown, clock jumps, interval mode), `TrackKeys`, history grouping by day/session,
@@ -27,11 +33,14 @@ CSV escaping/formula-injection guard and JSON export, WAV header, resampler pass
 meter, `IdentifySession` stop rules (first match, no-match, transient errors, single token refresh),
 `TokenPolicy`, sync merge rules, and Room-backed `HistoryRepository` (track de-duplication and metadata merge,
 search with literal `%`/`_`, favourites, date filters, deletion with and without sync, session counts and
-dangling-session repair, LWW application of remote changes).
+dangling-session repair, LWW application of remote changes), and (0.2.0) `ClipStore` (WAV round trip,
+newest-first listing, orphan files ignored, immutable creation time, purge by age then by size, delete all,
+IDs can't escape the directory) and `ClipPolicy` (which outcomes keep a recording).
 
-## Manual test plan (needs a device, the ShazamKit AAR and a configured server)
+## Manual test plan (needs a device, a configured server, and the ShazamKit AAR or a server engine key)
 
-None of these could be run by the agent (no device, no AAR, no Apple key). Record outcomes here.
+None of these could be run by the agent (no device, no AAR, no Apple key, no AudD/ACRCloud key). Record
+outcomes here.
 
 ### Recognition
 | Scenario | Expected | Result |
@@ -65,6 +74,20 @@ None of these could be run by the agent (no device, no AAR, no Apple key). Recor
 | Phone call during a session | "Microphone busy", resumes after the call | not run |
 | Rotation, background/foreground | No crash, state kept | not run |
 | Battery saver / Data saver | Session keeps notification; interval mode works | not run |
+
+### Saved recordings and server engines (0.2.0)
+| Scenario | Expected | Result |
+|---|---|---|
+| Keep recordings off (default), identify | No file in History › Recordings; Home says nothing is stored | not run |
+| Turn on Keep recordings | Consent dialog first; Home hint changes | not run |
+| No match with recordings on | "Recording kept · View recordings"; clip plays and shares (WAV) | not run |
+| Match with policy "Not identified" | "Keep this recording" offered; nothing saved unless tapped | not run |
+| Airplane mode, recordings + auto-retry on | "Saved for later"; back online → notification "Found it" opens the song | not run |
+| Identify on a saved recording (ShazamKit build) | ShazamKit first; history entry dated at the recording time | not run |
+| APK without ShazamKit, server with AudD + anonymous on | Home offers "Your server can identify songs"; after Allow, matches show "AudD via your NanoTune server" | not run |
+| Server adds ACRCloud after consent | App asks again before uploading | not run |
+| Retention 7 days | Older recordings disappear on next start | not run |
+| Delete local data | Recordings deleted too | not run |
 
 ### Accounts & sync
 | Scenario | Expected | Result |

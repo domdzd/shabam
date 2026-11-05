@@ -50,7 +50,11 @@ class ClipRetryWorker(context: Context, params: WorkerParameters) : CoroutineWor
         return when {
             !tryAgainLater -> Result.success()
             runAttemptCount < MAX_ATTEMPTS -> Result.retry()
-            else -> Result.success() // give up; the user can still tap "Identify again"
+            else -> {
+                // Give up: the recordings stay, marked as not identified; the user can still tap Identify.
+                container.clipRepository.pendingRetries().forEach { container.clipRepository.stopRetrying(it.id) }
+                Result.success()
+            }
         }
     }
 

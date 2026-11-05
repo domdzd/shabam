@@ -204,17 +204,21 @@ fun RecordingsTab(viewModel: RecordingsViewModel, onOpenTrack: (String) -> Unit,
 
     if (clips.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
-            InfoBanner(
-                icon = Icons.Filled.GraphicEq,
-                title = if (settings.saveRecordings) "No recordings yet" else "Saved recordings are off",
-                body = if (settings.saveRecordings) {
-                    "When a song can't be identified, its recording appears here so you can play it, share it or try again later."
-                } else {
-                    "Turn on Settings › Recordings to keep the audio of songs that couldn't be identified (or every identification). " +
-                        "You can then play it, share it, or identify it later — automatically when you're back online, or with another engine."
-                },
-                action = if (settings.saveRecordings) null else ({ TextButton(onClick = onOpenSettings) { Text("Open settings") } }),
-            )
+            if (settings.saveRecordings) {
+                InfoBanner(
+                    icon = Icons.Filled.GraphicEq,
+                    title = "No recordings yet",
+                    body = "When a song can't be identified, its recording appears here so you can play it, share it or try again later.",
+                )
+            } else {
+                InfoBanner(
+                    icon = Icons.Filled.GraphicEq,
+                    title = "Saved recordings are off",
+                    body = "Turn on Settings › Recordings to keep the audio of songs that couldn't be identified (or every identification). " +
+                        "You can then play it, share it, or identify it later — automatically when you're back online, or with another engine.",
+                    action = { TextButton(onClick = onOpenSettings) { Text("Open settings") } },
+                )
+            }
         }
         return
     }

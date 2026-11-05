@@ -6,14 +6,14 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request, Response
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..deps import client_ip, current_user, enforce, get_db, get_limiter, require_accounts
 from ..errors import ApiError
-from ..models import RefreshToken, User, new_id, utcnow
+from ..models import ProviderUsage, RefreshToken, User, new_id, utcnow
 from ..ratelimit import RateLimiter
 from ..schemas import Credentials, DeleteAccountRequest, RefreshRequest, TokenPair, UserOut
 from ..security import (
@@ -177,6 +177,7 @@ def delete_me(
     enforce(limiter, f"login:{client_ip(request)}", settings.login_rate_per_ip_per_minute, 60)
     if not verify_password(user.password_hash, body.password):
         raise ApiError(403, "invalid_password", "Password is incorrect.")
+    db.execute(delete(ProviderUsage).where(ProviderUsage.scope == f"user:{user.id}"))
     db.delete(user)
     db.commit()
     return Response(status_code=204)

@@ -69,7 +69,8 @@ product was built and tested so that only those steps remain.
 | Server-side routing, timeouts, per-provider + per-user daily quotas, kill switch | ✅ tested with fake providers |
 | Reconciliation + provenance (single / agree / conflict) | ✅ tested |
 | Client gating (≥ 2 engines, signed in, explicit consent) + upload of a 16 kHz clip | ✅ code · 🟡 untested end to end |
-| AudD / ACRCloud adapters | ⏳ not written — brief forbids paid providers in v1, and their docs were unreachable (no fabricated APIs). Plug-in point documented. |
+| AudD / ACRCloud adapters | ✅ 0.2.0: written against the providers' official GitHub code (their docs sites were unreachable), off by default, mocked-HTTP tests · 🟡 never run with a live key |
+| Server engines as the main engine (`/recognition/identify`, optional anonymous use with per-install/IP caps) | ✅ tested · 🟡 untested end to end |
 | AcoustID/Chromaprint adapter | ❌ rejected — cannot match microphone snippets (see RECOGNITION_PROVIDERS.md) |
 
 ## Phase 5 — release preparation
@@ -83,10 +84,28 @@ product was built and tested so that only those steps remain.
 | Device compatibility matrix | 🟡 template only — no devices available |
 | APK sideloading guide | ✅ README / RELEASE.md |
 
+## 0.2.0 — saved recordings, identify later, attachable engines
+
+| Item | Status |
+|------|--------|
+| Opt-in saved recordings (consent, policy, retention, 200 MB cap, no backup) | ✅ storage + policy unit-tested · 🟡 UI on device |
+| History › Recordings: play, share (FileProvider), delete, delete all | ✅ code · 🟡 on device |
+| "Identify again" (ShazamKit first, then server engines with consent) | ✅ code · 🟡 end to end |
+| Offline capture + automatic retry (WorkManager) + "Found it" notification | ✅ code · 🟡 on device |
+| Server engines as main engine in the app; consent tied to the exact engine list | ✅ code · 🟡 end to end |
+| Anonymous usage counters hashed and purged daily | ✅ tested |
+
+Next steps: [ROADMAP.md](ROADMAP.md).
+
 ## Next steps for the owner
 
-1. Apple: membership, AAR download, Media ID + Media Services key.
-2. Deploy the backend with the key; check `/api/v1/config`.
-3. Build with the AAR (locally or via `SHAZAMKIT_AAR_URL`), install, set the server URL.
-4. Run docs/TESTING.md on a real device; fix anything the first real ShazamKit compile reports.
-5. Optionally add your own release keystore secrets so updates install over each other.
+Pick at least one engine:
+
+* **AudD / ACRCloud (works with the Releases APK)**: get a key, set `AUDD_*` / `ACRCLOUD_*` with a daily
+  limit (and `SERVER_RECOGNITION_ANONYMOUS=true` if you don't want to require accounts) — DEPLOYMENT.md.
+* **ShazamKit**: Apple membership, AAR download, Media ID + Media Services key; build with the AAR (locally
+  or via `SHAZAMKIT_AAR_URL`).
+
+Then: deploy the backend and check `/api/v1/config`; install the APK and set the server URL; run
+docs/TESTING.md on a real device (fix anything the first real ShazamKit compile reports); optionally add your
+own release keystore secrets so updates install over each other.
