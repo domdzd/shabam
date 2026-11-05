@@ -33,8 +33,8 @@ def config(request: Request, settings: Settings = Depends(get_settings_dep)) -> 
         accounts=AccountsConfig(
             enabled=settings.accounts_available,
             registration_open=settings.accounts_available and settings.registration_open,
-            email_verification=False,
-            password_reset=False,
+            email_verification=settings.email_available,
+            password_reset=settings.email_available,
         ),
         enhanced=EnhancedConfig(
             available=enhanced.available(),

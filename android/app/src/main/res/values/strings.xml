@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NanoTune</string>
+    <string name="tile_identify">Identify song</string>
+    <string name="widget_identify">Identify</string>
+    <string name="widget_description">Tap to record and identify the song playing around you.</string>
+    <string name="shortcut_identify_short">Identify</string>
+    <string name="shortcut_identify_long">Identify a song</string>
 </resources>

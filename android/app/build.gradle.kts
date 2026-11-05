@@ -31,7 +31,7 @@ val musicBrainzContact: String = providers.gradleProperty("nanotune.musicBrainzC
 val appVersionCode: Int = providers.environmentVariable("NANOTUNE_VERSION_CODE")
     .map { it.toInt() }
     .getOrElse(1)
-val appVersionName = "0.2.0"
+val appVersionName = "0.3.0"
 
 // Optional release signing, injected by CI or your shell (never commit keystores).
 val releaseKeystorePath: String? = providers.environmentVariable("NANOTUNE_KEYSTORE_FILE").orNull

@@ -86,6 +86,21 @@ class UserOut(ApiModel):
     id: str
     email: str
     created_at: str
+    email_verified: bool = False
+
+
+class EmailRequest(ApiModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class CodeRequest(ApiModel):
+    code: str = Field(min_length=6, max_length=12)
+
+
+class PasswordResetConfirm(ApiModel):
+    email: str = Field(min_length=3, max_length=320)
+    code: str = Field(min_length=6, max_length=12)
+    new_password: str = Field(min_length=1, max_length=256)
 
 
 class TokenPair(ApiModel):

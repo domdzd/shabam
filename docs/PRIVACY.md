@@ -6,14 +6,17 @@ This describes what the app and the optional NanoTune server do with data. The i
 ## Microphone and audio
 
 * The microphone is used **only to identify music**.
-* **Identify (tap)**: recording starts only after you tap the button and stops at the first match, at the
-  time limit (5–20 s, default 12 s), when you tap again, or as soon as the app leaves the screen.
+* **Identify (tap)**: recording starts only after you tap the button (or the Quick Settings tile, widget or
+  launcher shortcut, which just open the Identify screen and tap it for you) and stops at the first match, at
+  the time limit (5–20 s, default 12 s), when you tap again, or as soon as the app leaves the screen.
 * **Listening session**: the microphone is used only after you explicitly start a session, and only while
   its ongoing notification ("NanoTune is listening (microphone on)") is visible. Pause and Stop are
   always available in the notification and the app. Sessions never start on their own, never restart after
   you stop them, and are not started at boot. In interval mode the microphone is closed between windows.
-* **By default, raw audio is processed in memory and never written to storage.** Buffers are overwritten
-  with zeros after use. The only exception is *Saved recordings* (below), which you have to turn on yourself.
+* **What a tap records is kept on the phone by default** (*Saved recordings*, below), encrypted, so you can
+  play, share or identify it later — the project owner asked for the button to always record and store the
+  song. Turn it off in **Settings › Recordings**; then raw audio is processed in memory only and buffers are
+  overwritten with zeros after use. Listening sessions never store audio.
 * With the standard engine (Apple ShazamKit) the audio is converted **on the phone** into a compact,
   non-reversible signature; only that signature is sent to Apple's Shazam service. Your NanoTune server
   never receives audio for standard recognition.
@@ -41,6 +44,10 @@ This describes what the app and the optional NanoTune server do with data. The i
   restore them on another phone. Device-specific settings (server address, consent) are not synced.
 * Passwords are stored as Argon2id hashes. Refresh tokens are stored as SHA-256 hashes, rotate on every use
   and are revoked if a stolen one is replayed. On the phone, tokens are encrypted with an Android Keystore key.
+* **Password reset / email confirmation** (only if the server owner set up SMTP): the server emails a
+  6-digit code to your address. Codes expire after 15 minutes, allow five tries and are stored only as keyed
+  hashes; requesting a reset never reveals whether an address has an account. Resetting signs out every
+  device.
 * The server does **not** store audio, fingerprints, IP-based listening logs or analytics.
 
 ## Your server's recognition engines (off by default)
@@ -69,19 +76,25 @@ use per install ID and per IP address. Anonymous counters store only a **keyed h
 IP address (never the raw values) and are deleted after the day ends. Deleting your account deletes its
 counters.
 
-## Saved recordings (off by default)
+## Saved recordings (on by default since 0.3)
 
-* Only after you turn on **Settings › Recordings › Keep recordings** and confirm a dialog that explains what
-  is stored. Turning it off stops saving new recordings; existing ones stay until deleted or expired.
-* What is kept: the audio NanoTune recorded while identifying (at most the listen limit, 5–20 s), by default
-  only when the song **wasn't identified** (no match, an error, or offline); optionally *every recording*.
+* **Settings › Recordings › Keep recordings** is on by default (changed in 0.3 at the owner's request, so the
+  Identify button always records and stores the song — also when no engine can identify it at that moment).
+  The microphone permission explanation and the Identify screen say so. Turning it off stops saving new
+  recordings; existing ones stay until deleted or expired.
+* What is kept: the audio NanoTune recorded while identifying (at most the listen limit, 5–20 s): by default
+  *every recording*; optionally only those that **weren't identified** (no match, no engine, an error, or
+  offline). Audio or video files you import are kept the same way (their first 90 s, as 16 kHz mono audio).
   Listening sessions never save audio.
-* Where: plain WAV files (16 kHz mono) in the app's **private storage on this phone**. Other apps can't read
-  them; they are **excluded from cloud backup and device-to-device transfer**, and never synced.
+* Where: WAV audio (16 kHz mono) **encrypted with AES-256-GCM** using a key held in the Android Keystore, in
+  the app's **private storage on this phone**. Other apps can't read them; they are **excluded from cloud
+  backup and device-to-device transfer**, and never synced. If the Keystore fails, a recording is stored
+  unencrypted in the same private storage rather than lost; recordings from 0.2 are encrypted on first start.
 * Recordings can contain **conversations or other sounds** near you. Share them with care.
 * They leave the phone only when you tap **Share** (the system share sheet, to the app you choose) or
-  identify one with your server's engines (see above). Identifying with ShazamKit stays on-device apart
-  from the usual signature.
+  **Save to device** (a place you pick), or identify one with your server's engines (see above). For sharing,
+  a decrypted copy is placed in the app's cache and removed before the next share and on the next start.
+  Identifying with ShazamKit stays on-device apart from the usual signature.
 * Automatic deletion after 7, 30 or 90 days (default 30) or never, plus a 200 MB cap (oldest go first).
 * **Offline capture**: with recordings on and *Identify automatically when back online* on, tapping Identify
   while offline records the clip and identifies it once the phone is online again, in the background,

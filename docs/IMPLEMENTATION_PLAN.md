@@ -95,6 +95,20 @@ product was built and tested so that only those steps remain.
 | Server engines as main engine in the app; consent tied to the exact engine list | ✅ code · 🟡 end to end |
 | Anonymous usage counters hashed and purged daily | ✅ tested |
 
+## 0.3.0 — always record, manage and import recordings, shortcuts, email codes
+
+| Item | Status |
+|------|--------|
+| Identify button always records and keeps the clip (also without an engine), stop early keeps it | ✅ code · 🟡 on device |
+| Recordings on by default (every recording), new settings keys so 0.2 values don't block it | ✅ |
+| Recordings encrypted at rest (Keystore AES-GCM), 0.2 files re-encrypted, plain fallback | ✅ storage unit-tested with a stand-in codec · 🟡 Keystore on device |
+| Manage recordings (player, rename, trim, share several, save to device, multi-delete, filters) | ✅ code · 🟡 on device |
+| Import audio/video files (MediaExtractor/MediaCodec) | ✅ code · 🟡 on device |
+| Quick Settings tile, widget, launcher shortcut | ✅ code · 🟡 on device |
+| Password reset + email verification (SMTP, hashed codes, migration 0002) | ✅ backend tested · 🟡 app flow on device |
+| Releases marked latest with a fixed-name `NanoTune.apk`; README download link | ✅ |
+| Translations, emulator UI tests | ⏳ 0.4 |
+
 Next steps: [ROADMAP.md](ROADMAP.md).
 
 ## Next steps for the owner

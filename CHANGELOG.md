@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.0 — 2026-11-05
+
+The Identify button always records and keeps the song; recordings can be managed, imported and
+identified later. Download: [latest APK](https://github.com/domdzd/shabam/releases/latest/download/NanoTune.apk).
+
+### Android app
+* **Always records** (owner request): tapping the big microphone records even when no engine can identify
+  the song right now (no ShazamKit in the build, no server, offline, engines not allowed yet) and keeps the
+  recording, then says why it couldn't be identified. Tap again to stop early and keep what was recorded;
+  leaving the screen while recording does the same. The recording is saved as soon as it stops, before any
+  upload, so network errors or cancelling never lose it.
+* **Recordings on by default**: *Keep recordings* now defaults to on and to *Every recording* (choose
+  *Only not identified* or turn it off in Settings › Recordings). The permission explanation, the Home
+  screen and the privacy screen say so.
+* **Recordings encrypted at rest** with AES-256-GCM (Android Keystore key). Recordings from 0.2 are
+  encrypted on first start; if the Keystore fails, audio is stored unencrypted in private storage rather
+  than lost.
+* **Manage recordings** (History › Recordings): seekable player, rename, trim (*keep only this part* or
+  *identify this part*), share one or several, save to the device (system file picker), delete one or
+  several (long-press to select), filters, *identify all not identified*.
+* **Import an audio or video file** (MP3, M4A/AAC, OGG, FLAC, WAV, MP4… whatever the phone can decode):
+  the first 90 s are kept as a recording and identified if an engine is available.
+* Engines get the **loudest 12 seconds** of a recording instead of the first 12 seconds.
+* **One-tap entry points**: Quick Settings tile *Identify song*, a 1×1 home-screen widget and a launcher
+  shortcut, all opening NanoTune and starting to record.
+* **Forgot password / confirm email**: when the server can send email, sign-in offers *Forgot password?*
+  (code by email, new password, every device signed out) and the account screen offers to confirm the address.
+
+### Backend
+* Password reset and email verification with 6-digit codes: SMTP settings (`SMTP_*`), codes valid 15
+  minutes, five tries, stored only as an HMAC keyed with the server secret, sent after the response so timing
+  doesn't reveal accounts, rate-limited per address and IP. New migration `0002`.
+* `/config` advertises `password_reset` / `email_verification` only when SMTP is configured.
+* 83 tests (10 new).
+
+### Releases
+* Releases are full releases marked *latest*, with a fixed-name `NanoTune.apk`, so the README's download
+  link always points at the newest build.
+
+### Not done yet
+* Translations and automated UI tests on an emulator (see docs/ROADMAP.md).
+
 ## 0.2.0 — 2026-11-04
 
 Saved recordings, "identify later", and server engines you can attach (AudD, ACRCloud).

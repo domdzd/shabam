@@ -4,9 +4,9 @@
 
 | Suite | Command | Where it runs | Latest result |
 |---|---|---|---|
-| Backend (pytest, 73 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **73 passed** (local, Python 3.13; CI green) |
+| Backend (pytest, 83 tests) | `cd backend && pip install -r requirements-dev.txt && python -m pytest` | Locally and in `backend.yml` | **83 passed** (local, Python 3.13; CI green) |
 | Backend Docker smoke test | builds the image, runs it read-only, checks health/config/token 503/register | `backend.yml` | **Passed** |
-| Android unit tests (JUnit + Robolectric, 43 tests) | `cd android && ./gradlew testDebugUnitTest` | `android.yml` (count printed in the "Unit test summary" step) | **Passed** (CI run 7) |
+| Android unit tests (JUnit + Robolectric, 50 tests) | `cd android && ./gradlew testDebugUnitTest` | `android.yml` (count printed in the "Unit test summary" step) | **50 passed** (CI run 9) |
 | Android lint | `./gradlew lintDebug` | `android.yml` | **0 errors** (remaining warnings are intentional dependency pins and debug-only network config) |
 
 ### What the backend tests cover
@@ -26,6 +26,10 @@ status codes, transport failures (bad gateway, connection errors), host validati
 engines in `PROVIDER_ORDER`; `/recognition/identify` without ShazamKit, anonymous use only with the owner's
 opt-in and an install ID, per-install and per-IP caps, anonymous counters stored only as keyed hashes and
 purged after the day, account deletion removing usage counters. No live API is ever called.
+**Email codes** (0.3) with a fake mailer: password reset end to end (new password works, old one and old
+sessions don't, single use), no account enumeration, five-try limit, expiry, weak password keeps the code,
+keyed-hash storage, verification flow, per-address rate limit, codes deleted with the account, endpoints
+off without SMTP.
 
 ### What the Android tests cover
 `DuplicateFilter` (sliding cooldown, clock jumps, interval mode), `TrackKeys`, history grouping by day/session,
@@ -35,7 +39,11 @@ meter, `IdentifySession` stop rules (first match, no-match, transient errors, si
 search with literal `%`/`_`, favourites, date filters, deletion with and without sync, session counts and
 dangling-session repair, LWW application of remote changes), and (0.2.0) `ClipStore` (WAV round trip,
 newest-first listing, orphan files ignored, immutable creation time, purge by age then by size, delete all,
-IDs can't escape the directory) and `ClipPolicy` (which outcomes keep a recording).
+IDs can't escape the directory) and `ClipPolicy` (which outcomes keep a recording); 0.3 adds names,
+trimming (`replaceAudio`), encrypted storage with a stand-in codec, reading and re-encrypting 0.2 files,
+falling back to plain files when encryption fails, orphan clean-up, and `Pcm.loudestWindow` / `offsetOf`.
+Not unit-tested (need a device): the Keystore codec itself, MediaCodec decoding of imported files, the
+player, tile and widget.
 
 ## Manual test plan (needs a device, a configured server, and the ShazamKit AAR or a server engine key)
 
@@ -88,6 +96,20 @@ outcomes here.
 | Server adds ACRCloud after consent | App asks again before uploading | not run |
 | Retention 7 days | Older recordings disappear on next start | not run |
 | Delete local data | Recordings deleted too | not run |
+
+### 0.3: always record, manage, import, shortcuts
+| Scenario | Expected | Result |
+|---|---|---|
+| Releases APK, no server: tap the button | Records for the listen limit, then "Recording saved" with the reason | not run |
+| Tap again while recording | Stops early and keeps the recording (≥ 3 s) | not run |
+| Leave the app while recording | Recording stops and is kept | not run |
+| Settings › Recordings › off, no engine | Explains what's missing without recording | not run |
+| Recordings: play, seek, rename, trim (keep / identify part) | Works; trimmed file plays the selected part | not run |
+| Share two recordings / Save to device | Receiving app gets WAV files / file appears where chosen | not run |
+| Import an MP3 / M4A / video | Becomes a recording named after the file; identified if an engine is available | not run |
+| Recording files on disk (adb, debug build) | `.nta` files, not playable WAV | not run |
+| Quick Settings tile, widget, launcher shortcut | Open NanoTune and start recording (permission asked first time) | not run |
+| Forgot password (server with SMTP) | Code arrives, new password works, other devices signed out | not run |
 
 ### Accounts & sync
 | Scenario | Expected | Result |

@@ -136,6 +136,8 @@ cd deploy && docker compose up -d --build
   the database.
 * To close registrations: `REGISTRATION_OPEN=false`. To disable accounts entirely: `ACCOUNTS_ENABLED=false`
   (anonymous token issuance keeps working).
-* Email verification and password reset are **not implemented** (no SMTP flow yet); the app tells users that
-  password reset is unavailable.
+* **Password reset and email confirmation** work once `SMTP_HOST` and `SMTP_FROM` are set (plus
+  `SMTP_USERNAME`/`SMTP_PASSWORD` and `SMTP_SECURITY`, see `.env.example`). The server emails 6-digit codes
+  (15 minutes, five tries, stored only as keyed hashes). Without SMTP the app says password reset is
+  unavailable. Delivery errors are logged without addresses or codes.
 * Delete all server data: `docker compose down -v` (removes the volume).

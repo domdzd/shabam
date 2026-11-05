@@ -8,7 +8,7 @@ from app.config import APPLE_MAX_TOKEN_TTL_SECONDS, Settings
 def test_health(client):
     response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "0.2.0"}
+    assert response.json() == {"status": "ok", "version": "0.3.0"}
     assert response.headers["cache-control"] == "no-store"
 
 

@@ -13,21 +13,25 @@ brief's privacy and "no fabricated APIs" rules before it is built.
 2. **First ShazamKit build.** The adapter has never been compiled against Apple's AAR; expect small fixes.
 3. **Own release keystore** (GitHub secrets), so updates install over each other (see [RELEASE.md](RELEASE.md)).
 
-## Next (0.3)
+## Done in 0.3
 
-* **Identify an audio file**: pick a file with the system picker, decode it on the phone (MediaExtractor +
-  MediaCodec), resample to 16 kHz and run it through the same path as saved recordings. Shares the
-  recordings code; useful for voice notes and videos.
-* **Choose the part to identify**: a simple trim bar on a saved recording, so a 20 s clip with talking at
-  the start can still match.
-* **Encrypt saved recordings at rest** with the app's existing Android Keystore key (AES-GCM), decrypting
-  only to play, share or identify.
-* **Quick Settings tile / home-screen widget** for one-tap identify. Check Android 14+ rules for starting
-  microphone use from a tile before building it.
-* **Translations**: move UI strings from Kotlin into `strings.xml`, then add languages.
+* The Identify button always records and keeps the song, even without an engine; tap to stop early.
+* Recordings encrypted at rest (Android Keystore, AES-GCM).
+* Manage recordings: seekable player, rename, trim (keep or identify a part), share several, save to
+  device, multi-select delete, filters, identify all.
+* Identify an audio or video file (imported as a recording).
+* Quick Settings tile, home-screen widget and launcher shortcut.
+* Password reset and email verification by emailed code (needs SMTP on the server).
+
+## Next (0.4)
+
+* **Translations**: move UI strings from Kotlin into `strings.xml`, then add languages. Not done in 0.3: it
+  touches every screen and is best done in one dedicated pass.
 * **UI tests in CI**: Compose UI tests on an emulator (GitHub-hosted Linux runners support hardware
   acceleration) for the identify, recordings and consent flows.
-* **Email verification and password reset** (SMTP), which are still unimplemented.
+* **Long imported files**: try several 12-second windows of a song (not just the loudest one) before giving up.
+* **Recording quality options**: keep 48 kHz originals for recordings the user wants to share, not only the
+  16 kHz copies used for identification.
 
 ## Later
 

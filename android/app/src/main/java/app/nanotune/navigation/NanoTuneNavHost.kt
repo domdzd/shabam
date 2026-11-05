@@ -64,7 +64,7 @@ private val topLevels = listOf(
 )
 
 @Composable
-fun NanoTuneNavHost(container: AppContainer, navController: NavHostController) {
+fun NanoTuneNavHost(container: AppContainer, navController: NavHostController, identifyRequest: Long = 0L) {
     val backStack by navController.currentBackStackEntryAsState()
     val destination = backStack?.destination
     val showBottomBar = topLevels.any { top -> destination?.hierarchy?.any(top.matches) == true }
@@ -102,6 +102,7 @@ fun NanoTuneNavHost(container: AppContainer, navController: NavHostController) {
                         onOpenTrack = { navController.navigate(TrackRoute(it)) },
                         onOpenSettings = { navController.navigate(SettingsRoute) { launchSingleTop = true } },
                         onOpenRecordings = { navController.navigate(HistoryRoute(tab = 1)) { launchSingleTop = true } },
+                        autoIdentifyRequest = identifyRequest,
                     )
                 }
                 composable<HistoryRoute> { entry ->

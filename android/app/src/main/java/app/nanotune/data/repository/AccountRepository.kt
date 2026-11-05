@@ -4,8 +4,11 @@ import android.os.Build
 import app.nanotune.data.remote.ApiResult
 import app.nanotune.data.remote.BackendApi
 import app.nanotune.data.remote.BackendClient
+import app.nanotune.data.remote.dto.CodeRequestDto
 import app.nanotune.data.remote.dto.CredentialsDto
 import app.nanotune.data.remote.dto.DeleteAccountRequestDto
+import app.nanotune.data.remote.dto.EmailRequestDto
+import app.nanotune.data.remote.dto.PasswordResetConfirmDto
 import app.nanotune.data.remote.dto.RefreshRequestDto
 import app.nanotune.data.remote.dto.TokenPairDto
 import app.nanotune.data.settings.AccountSession
@@ -60,6 +63,35 @@ class AccountRepository(
             is ApiResult.NetworkError -> AuthResult.Failure(result.message)
             ApiResult.NotConfigured -> AuthResult.Failure("No NanoTune server is configured.")
         }
+    }
+
+    /** Asks the server to email a password reset code (it never says whether the address has an account). */
+    suspend fun requestPasswordReset(email: String): AuthResult =
+        simple(backend.call { requestPasswordReset(EmailRequestDto(email.trim())) })
+
+    /** Sets a new password with the emailed code; the server signs out every device. */
+    suspend fun confirmPasswordReset(email: String, code: String, newPassword: String): AuthResult =
+        when (val result = backend.call { confirmPasswordReset(PasswordResetConfirmDto(email.trim(), code.trim(), newPassword)) }) {
+            is ApiResult.HttpError -> AuthResult.Failure(result.message)
+            else -> simple(result)
+        }
+
+    suspend fun requestEmailVerification(): AuthResult = simple(authorized { api, auth -> api.requestEmailVerification(auth) })
+
+    suspend fun confirmEmailVerification(code: String): AuthResult =
+        simple(authorized { api, auth -> api.confirmEmailVerification(auth, CodeRequestDto(code.trim())) })
+
+    /** Whether the signed-in address is confirmed, or null if the server can't be asked right now. */
+    suspend fun emailVerified(): Boolean? = when (val result = authorized { api, auth -> api.me(auth) }) {
+        is ApiResult.Ok -> result.value.emailVerified
+        else -> null
+    }
+
+    private fun simple(result: ApiResult<*>): AuthResult = when (result) {
+        is ApiResult.Ok -> AuthResult.Success
+        is ApiResult.HttpError -> AuthResult.Failure(result.message)
+        is ApiResult.NetworkError -> AuthResult.Failure(result.message)
+        ApiResult.NotConfigured -> AuthResult.Failure("No NanoTune server is configured.")
     }
 
     /** Runs [block] with a valid `Authorization` header, refreshing once on 401. */

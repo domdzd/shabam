@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import Settings, get_settings
 from .db import Database
 from .errors import install_error_handlers
+from .mailer import Mailer, SmtpMailer
 from .ratelimit import RateLimiter
 from .recognition.base import ProviderAdapter
 from .recognition.registry import build_providers
@@ -40,7 +41,11 @@ def _make_signer(settings: Settings) -> DeveloperTokenSigner | None:
         return None
 
 
-def create_app(settings: Settings | None = None, providers: list[ProviderAdapter] | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    providers: list[ProviderAdapter] | None = None,
+    mailer: Mailer | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -64,6 +69,8 @@ def create_app(settings: Settings | None = None, providers: list[ProviderAdapter
     app.state.database = Database(settings.database_url)
     app.state.limiter = RateLimiter()
     app.state.signer = _make_signer(settings)
+    # Codes by email only when accounts and SMTP are configured (tests inject a fake mailer).
+    app.state.mailer = (mailer or SmtpMailer(settings)) if settings.email_available else None
     app.state.enhanced = EnhancedRouter(
         settings,
         providers if providers is not None else build_providers(settings),

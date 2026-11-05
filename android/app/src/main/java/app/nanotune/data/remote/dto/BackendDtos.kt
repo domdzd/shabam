@@ -86,6 +86,21 @@ data class UserDto(
     val id: String,
     val email: String,
     @SerialName("created_at") val createdAt: String,
+    /** Absent on 0.1/0.2 servers. */
+    @SerialName("email_verified") val emailVerified: Boolean = false,
+)
+
+@Serializable
+data class EmailRequestDto(val email: String)
+
+@Serializable
+data class CodeRequestDto(val code: String)
+
+@Serializable
+data class PasswordResetConfirmDto(
+    val email: String,
+    val code: String,
+    @SerialName("new_password") val newPassword: String,
 )
 
 @Serializable

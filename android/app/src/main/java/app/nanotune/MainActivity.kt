@@ -1,5 +1,6 @@
 package app.nanotune
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
@@ -21,9 +22,11 @@ import androidx.navigation.compose.rememberNavController
 import app.nanotune.core.network.NetworkState
 import app.nanotune.data.settings.AppSettings
 import app.nanotune.feature.common.LocalAllowNetworkImages
+import app.nanotune.navigation.HomeRoute
 import app.nanotune.navigation.NanoTuneNavHost
 import app.nanotune.navigation.SessionRoute
 import app.nanotune.navigation.TrackRoute
+import app.nanotune.service.IdentifyShortcut
 import app.nanotune.ui.theme.NanoTuneTheme
 import app.nanotune.ui.theme.isAppInDarkTheme
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,11 +34,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 class MainActivity : ComponentActivity() {
     private val openSessionRequests = MutableStateFlow(0)
     private val openTrackRequests = MutableStateFlow<String?>(null)
+    /** Time of the last "start recording now" request (0 = none); grows across recreation. */
+    private val identifyRequests = MutableStateFlow(0L)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as NanoTuneApp).container
-        handleIntent(intent)
+        // After a rotation the launching intent is delivered again; only act on it once.
+        if (savedInstanceState == null) handleIntent(intent)
+        IdentifyShortcut.publish(this)
 
         setContent {
             val settings by container.settingsRepository.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
@@ -54,10 +61,19 @@ class MainActivity : ComponentActivity() {
                     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize().statusBarsPadding()) {
                         val navController = rememberNavController()
                         val openRequests by openSessionRequests.collectAsStateWithLifecycle()
-                        NanoTuneNavHost(container, navController)
+                        val identifyRequest by identifyRequests.collectAsStateWithLifecycle()
+                        NanoTuneNavHost(container, navController, identifyRequest)
                         // Runs after NavHost has set its graph in this composition.
                         LaunchedEffect(openRequests) {
                             if (openRequests > 0) navController.navigate(SessionRoute) { launchSingleTop = true }
+                        }
+                        LaunchedEffect(identifyRequest) {
+                            if (identifyRequest > 0L) {
+                                navController.navigate(HomeRoute) {
+                                    popUpTo(HomeRoute) { inclusive = false }
+                                    launchSingleTop = true
+                                }
+                            }
                         }
                         val trackRequest by openTrackRequests.collectAsStateWithLifecycle()
                         LaunchedEffect(trackRequest) {
@@ -81,6 +97,7 @@ class MainActivity : ComponentActivity() {
         when (intent?.action) {
             ACTION_OPEN_SESSION -> openSessionRequests.value++
             ACTION_OPEN_TRACK -> openTrackRequests.value = intent.getStringExtra(EXTRA_TRACK_ID)
+            ACTION_IDENTIFY -> identifyRequests.value = System.currentTimeMillis()
         }
     }
 
@@ -88,5 +105,10 @@ class MainActivity : ComponentActivity() {
         const val ACTION_OPEN_SESSION = "app.nanotune.OPEN_SESSION"
         const val ACTION_OPEN_TRACK = "app.nanotune.OPEN_TRACK"
         const val EXTRA_TRACK_ID = "track_id"
+
+        /** Opens the Identify screen and starts recording (tile, widget, launcher shortcut). */
+        const val ACTION_IDENTIFY = "app.nanotune.IDENTIFY"
+
+        fun identifyIntent(context: Context): Intent = Intent(context, MainActivity::class.java).setAction(ACTION_IDENTIFY)
     }
 }

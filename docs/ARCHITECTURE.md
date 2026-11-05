@@ -47,8 +47,9 @@ Single Gradle module (`android/app`) organised by layer, close to the brief's su
 | `recognition/shazamkit` | `ShazamTokenSource` (fetch/cache tokens), `TokenPolicy`; `ShazamKitBridge` lives in `src/shazamkit/kotlin` (real) or `src/noshazamkit/kotlin` (stub) and is selected at build time by the presence of the AAR. |
 | `recognition/enhanced` | Uploads a 16 kHz WAV clip to the server's engines (opt-in only): main engine (`/recognition/identify`) or fallback (`/recognition/enhanced`). |
 | `recognition/ClipRecognizer` | "Identify later" for a saved recording: ShazamKit first, then the server engines if allowed; records each attempt. |
-| `data/clips` | `ClipStore` (WAV + JSON metadata files in `filesDir/clips`, atomic writes, purge by age/size), `ClipPolicy` (what is kept), `ClipRepository` (observable list, 16 kHz storage). |
-| `feature/recordings` | History › Recordings tab: play (MediaPlayer), share (FileProvider), identify, delete. |
+| `data/clips` | `ClipStore` (audio + JSON metadata files in `filesDir/clips`, atomic writes, rename/trim, purge by age/size), `ClipCodec` (`KeystoreClipCodec` in `core/security` encrypts audio with AES-256-GCM; plain fallback), `ClipPolicy` (what is kept), `ClipRepository` (observable list, 16 kHz storage). |
+| `feature/recordings` | History › Recordings tab: in-memory player (MediaDataSource, so encrypted files never hit disk decrypted), rename, trim, identify (all), share several (decrypted copies in `cache/shared`, cleared on start), save to device (SAF), multi-select delete, import via `core/audio/AudioFileDecoder` (MediaExtractor + MediaCodec → 16 kHz mono). |
+| `service/IdentifyShortcuts` | Quick Settings tile, home-screen widget and dynamic launcher shortcut; all open `MainActivity` with `ACTION_IDENTIFY`, which starts recording on the visible Identify screen. |
 | `core/audio` | `AudioCapture` (AudioRecord, UNPROCESSED/MIC, 48/44.1/32/16 kHz), `Pcm` (WAV, level meter, windowed-sinc resampler), dedicated audio thread. |
 | `core/network`, `core/security` | Connectivity (metered/unmetered), Keystore AES-GCM cipher. |
 | `data/local` | Room entities/DAOs per the brief (Track, Recognition, Favourite, ListeningSession) + sync bookkeeping (`updated_at`, `deleted_at`, `pending_sync`). |
@@ -71,8 +72,11 @@ Manual DI: `AppContainer` builds the graph once in `NanoTuneApp`.
 4. Server-engine route, or the optional fallback after a ShazamKit no-match: upload the in-memory clip
    (≤ 12 s, 16 kHz).
 5. Save the match (track de-duplicated by identity key), trigger enrichment and a debounced sync.
-6. Recording: only with *Keep recordings* on, `ClipPolicy` decides whether to keep it (16 kHz WAV) or offer
-   "Keep this recording"; offline captures schedule `ClipRetryWorker`. Otherwise buffers are wiped.
+6. Recording (with *Keep recordings*, on by default): the clip is saved right after recording stops — before
+   any upload, so errors or cancelling can't lose it — then updated with the attempts and the result.
+   `ClipPolicy` decides what is kept; with no engine available the button still records (route
+   "record only") and the clip is kept to identify later; offline captures schedule `ClipRetryWorker`.
+   With recordings off, buffers are wiped and nothing is recorded without an engine.
 
 ### Listening session flow
 

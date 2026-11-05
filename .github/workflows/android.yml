@@ -150,19 +150,32 @@ jobs:
           name: nanotune-apks
           path: dist
 
+      # A copy with a fixed name, so https://github.com/<owner>/<repo>/releases/latest/download/NanoTune.apk
+      # (linked from the README) always downloads the newest release build.
+      - name: Add stable-name copy of the release APK
+        run: |
+          cd dist
+          release_apk=$(ls NanoTune-*-build*.apk | grep -v -- '-debug.apk' | head -n 1)
+          test -n "$release_apk"
+          cp "$release_apk" NanoTune.apk
+          sha256sum NanoTune.apk >> SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}-build.{1}', needs.build.outputs.version, github.run_number) }}
           target_commitish: ${{ github.sha }}
           name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('NanoTune {0} (build {1})', needs.build.outputs.version, github.run_number) }}
-          prerelease: true
+          # A full (not pre-) release marked latest, so the README's "latest" links resolve to it.
+          prerelease: false
+          make_latest: "true"
           files: |
             dist/*.apk
             dist/SHA256SUMS.txt
           body: |
             Sideloadable Android build of NanoTune (Android 8.0+).
 
-            * `NanoTune-*-buildN.apk` — optimised release build (install this one).
+            * `NanoTune.apk` / `NanoTune-*-buildN.apk` — optimised release build (install this one; same file).
             * `NanoTune-*-debug.apk` — debuggable build for troubleshooting.
 
             Music recognition needs a NanoTune server plus an engine: Apple's ShazamKit (needs the

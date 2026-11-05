@@ -2,6 +2,9 @@ package app.nanotune.data.remote
 
 import app.nanotune.data.remote.dto.CredentialsDto
 import app.nanotune.data.remote.dto.DeleteAccountRequestDto
+import app.nanotune.data.remote.dto.PasswordResetConfirmDto
+import app.nanotune.data.remote.dto.CodeRequestDto
+import app.nanotune.data.remote.dto.EmailRequestDto
 import app.nanotune.data.remote.dto.EnhancedResultDto
 import app.nanotune.data.remote.dto.HealthDto
 import app.nanotune.data.remote.dto.RefreshRequestDto
@@ -53,6 +56,19 @@ interface BackendApi {
 
     @HTTP(method = "DELETE", path = "me", hasBody = true)
     suspend fun deleteMe(@Header("Authorization") authorization: String, @Body body: DeleteAccountRequestDto): Response<Unit>
+
+    /** Emails a reset code (always 202, whether or not the address has an account). */
+    @POST("auth/password-reset/request")
+    suspend fun requestPasswordReset(@Body body: EmailRequestDto): Response<Unit>
+
+    @POST("auth/password-reset/confirm")
+    suspend fun confirmPasswordReset(@Body body: PasswordResetConfirmDto): Response<Unit>
+
+    @POST("me/email-verification/request")
+    suspend fun requestEmailVerification(@Header("Authorization") authorization: String): Response<Unit>
+
+    @POST("me/email-verification/confirm")
+    suspend fun confirmEmailVerification(@Header("Authorization") authorization: String, @Body body: CodeRequestDto): Response<UserDto>
 
     @GET("sync")
     suspend fun pull(@Header("Authorization") authorization: String, @Query("since") since: Long): Response<SyncPullDto>

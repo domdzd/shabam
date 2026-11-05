@@ -74,6 +74,9 @@ class AccountViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+    private val _emailVerified = MutableStateFlow<Boolean?>(null)
+    /** Whether the signed-in address is confirmed (null = unknown). */
+    val emailVerified: StateFlow<Boolean?> = _emailVerified.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
@@ -116,6 +119,65 @@ class AccountViewModel(private val container: AppContainer) : ViewModel() {
 
     fun syncNow() {
         viewModelScope.launch { _message.value = syncMessage(container.syncRepository.syncNow()) }
+    }
+
+    fun loadProfile() {
+        viewModelScope.launch { _emailVerified.value = container.accountRepository.emailVerified() }
+    }
+
+    /** Step 1 of "Forgot password": [onSent] runs once the request went through. */
+    fun requestPasswordReset(email: String, onSent: () -> Unit) = launchBusy {
+        when (val result = container.accountRepository.requestPasswordReset(email)) {
+            AuthResult.Success -> {
+                _message.value = "If an account exists for $email, a code is on its way. Check your inbox."
+                onSent()
+            }
+            is AuthResult.Failure -> _message.value = result.message
+        }
+    }
+
+    /** Step 2: new password with the emailed code. [onDone] runs on success. */
+    fun confirmPasswordReset(email: String, code: String, newPassword: String, onDone: () -> Unit) = launchBusy {
+        when (val result = container.accountRepository.confirmPasswordReset(email, code, newPassword)) {
+            AuthResult.Success -> {
+                _message.value = "Password changed. Sign in with your new password."
+                onDone()
+            }
+            is AuthResult.Failure -> _message.value = result.message
+        }
+    }
+
+    fun requestEmailVerification(onSent: () -> Unit) = launchBusy {
+        when (val result = container.accountRepository.requestEmailVerification()) {
+            AuthResult.Success -> {
+                _message.value = "Code sent. Check your inbox."
+                onSent()
+            }
+            is AuthResult.Failure -> _message.value = result.message
+        }
+    }
+
+    fun confirmEmailVerification(code: String, onDone: () -> Unit) = launchBusy {
+        when (val result = container.accountRepository.confirmEmailVerification(code)) {
+            AuthResult.Success -> {
+                _emailVerified.value = true
+                _message.value = "Email address confirmed."
+                onDone()
+            }
+            is AuthResult.Failure -> _message.value = result.message
+        }
+    }
+
+    private fun launchBusy(block: suspend () -> Unit) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            try {
+                block()
+            } finally {
+                _busy.value = false
+            }
+        }
     }
 
     fun setSyncEnabled(enabled: Boolean) {
@@ -180,6 +242,10 @@ private fun SignedOut(viewModel: AccountViewModel, busy: Boolean, onBack: () -> 
     val accounts = (server as? ServerState.Online)?.config?.accounts
     val emailValid = Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
     val passwordValid = password.length >= MIN_PASSWORD
+    var showReset by rememberSaveable { mutableStateOf(false) }
+    if (showReset) {
+        PasswordResetDialog(viewModel, busy, initialEmail = email.trim(), onDismiss = { showReset = false })
+    }
 
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("An account is optional", style = MaterialTheme.typography.titleLarge)
@@ -221,6 +287,9 @@ private fun SignedOut(viewModel: AccountViewModel, busy: Boolean, onBack: () -> 
                 enabled = !busy && emailValid && passwordValid && accounts?.registrationOpen != false,
                 modifier = Modifier.weight(1f),
             ) { Text("Create account") }
+        }
+        if (accounts?.passwordReset == true) {
+            TextButton(onClick = { showReset = true }, enabled = !busy) { Text("Forgot password?") }
         }
         TextButton(onClick = onBack) { Text("Continue without an account") }
         if (accounts != null && !accounts.passwordReset) {
@@ -270,7 +339,29 @@ private fun SignedIn(viewModel: AccountViewModel, session: AccountSession) {
         )
     }
 
-    ListItem(headlineContent = { Text(session.email) }, supportingContent = { Text("Signed in") })
+    val server by viewModel.server.collectAsStateWithLifecycle()
+    val emailVerified by viewModel.emailVerified.collectAsStateWithLifecycle()
+    val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val canVerify = (server as? ServerState.Online)?.config?.accounts?.emailVerification == true
+    var showVerify by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(session.userId) { viewModel.loadProfile() }
+    if (showVerify) VerifyEmailDialog(viewModel, busy, session.email, onDismiss = { showVerify = false })
+
+    ListItem(
+        headlineContent = { Text(session.email) },
+        supportingContent = {
+            Text(
+                when (emailVerified) {
+                    true -> "Signed in · email confirmed"
+                    false -> "Signed in · email not confirmed yet"
+                    null -> "Signed in"
+                },
+            )
+        },
+        trailingContent = {
+            if (canVerify && emailVerified == false) TextButton(onClick = { showVerify = true }) { Text("Confirm") }
+        },
+    )
     ListItem(
         headlineContent = { Text("Cloud sync") },
         supportingContent = {
@@ -299,6 +390,109 @@ private fun SignedIn(viewModel: AccountViewModel, session: AccountSession) {
         supportingContent = { Text("Removes everything stored on your NanoTune server") },
         leadingContent = { Icon(Icons.Filled.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
         trailingContent = { TextButton(onClick = { confirmDelete = true }) { Text("Delete") } },
+    )
+}
+
+@Composable
+private fun PasswordResetDialog(viewModel: AccountViewModel, busy: Boolean, initialEmail: String, onDismiss: () -> Unit) {
+    var email by rememberSaveable { mutableStateOf(initialEmail) }
+    var codeSent by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    val emailValid = Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reset password") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (codeSent) {
+                        "Enter the 6-digit code from the email and choose a new password. Every device is signed out."
+                    } else {
+                        "Your NanoTune server will email you a 6-digit code."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    singleLine = true,
+                    enabled = !codeSent,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                )
+                if (codeSent) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { value -> code = value.filter(Char::isDigit).take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    )
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = { newPassword = it },
+                        label = { Text("New password") },
+                        supportingText = { Text("At least $MIN_PASSWORD characters") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    TextButton(onClick = { viewModel.requestPasswordReset(email.trim()) {} }, enabled = !busy) { Text("Send a new code") }
+                }
+            }
+        },
+        confirmButton = {
+            if (codeSent) {
+                TextButton(
+                    onClick = { viewModel.confirmPasswordReset(email.trim(), code, newPassword, onDone = onDismiss) },
+                    enabled = !busy && code.length == 6 && newPassword.length >= MIN_PASSWORD,
+                ) { Text("Change password") }
+            } else {
+                TextButton(
+                    onClick = { viewModel.requestPasswordReset(email.trim()) { codeSent = true } },
+                    enabled = !busy && emailValid,
+                ) { Text("Send code") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun VerifyEmailDialog(viewModel: AccountViewModel, busy: Boolean, email: String, onDismiss: () -> Unit) {
+    var codeSent by rememberSaveable { mutableStateOf(false) }
+    var code by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Confirm your email") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (codeSent) "Enter the 6-digit code sent to $email." else "Your NanoTune server will email a 6-digit code to $email.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (codeSent) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { value -> code = value.filter(Char::isDigit).take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (codeSent) {
+                TextButton(onClick = { viewModel.confirmEmailVerification(code, onDone = onDismiss) }, enabled = !busy && code.length == 6) {
+                    Text("Confirm")
+                }
+            } else {
+                TextButton(onClick = { viewModel.requestEmailVerification { codeSent = true } }, enabled = !busy) { Text("Send code") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

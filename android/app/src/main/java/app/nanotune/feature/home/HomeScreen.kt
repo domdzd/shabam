@@ -54,6 +54,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,6 +93,8 @@ fun HomeScreen(
     onOpenTrack: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecordings: () -> Unit,
+    /** Time of the latest request from the tile, widget or shortcut to start recording right away. */
+    autoIdentifyRequest: Long = 0L,
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -121,6 +125,14 @@ fun HomeScreen(
             !keepsRecordings && !engineReady -> viewModel.identify()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> viewModel.identify()
             else -> showRationale = true
+        }
+    }
+
+    var handledAutoRequest by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(autoIdentifyRequest) {
+        if (autoIdentifyRequest > handledAutoRequest) {
+            handledAutoRequest = autoIdentifyRequest
+            if (!listening) onTap()
         }
     }
 

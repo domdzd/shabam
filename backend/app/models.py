@@ -28,6 +28,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     #: Monotonic change counter used as the sync cursor for this user.
     sync_seq: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: Set once the user proved access to the mailbox (verification or password reset code).
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
@@ -96,3 +98,18 @@ class ProviderUsage(Base):
     scope: Mapped[str] = mapped_column(String(120), index=True)
     day: Mapped[str] = mapped_column(String(10))
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class EmailCode(Base):
+    """One-time codes sent by email (password reset, email verification). Only a keyed hash is stored."""
+
+    __tablename__ = "email_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: ``reset`` or ``verify``
+    purpose: Mapped[str] = mapped_column(String(16))
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

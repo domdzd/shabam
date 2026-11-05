@@ -59,12 +59,19 @@ class Settings(BaseSettings):
     sync_max_batch: int = 500
     sync_max_records_per_user: int = 100_000
 
-    # --- Optional SMTP (email verification / password reset are not implemented yet) -----
+    # --- Optional SMTP: password reset and email verification codes ----------------------
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
+    #: starttls (port 587), ssl (port 465) or none (local relays only).
+    smtp_security: str = "starttls"
+    smtp_timeout_seconds: float = 10.0
+    email_code_ttl_minutes: int = 15
+    email_code_max_attempts: int = 5
+    email_rate_per_address_per_hour: int = 5
+    email_rate_per_ip_per_hour: int = 20
 
     # --- Enhanced recognition (server-side providers; all disabled by default) -------------
     #: Global kill switch: when true no server-side provider is ever called.
@@ -104,6 +111,13 @@ class Settings(BaseSettings):
             raise ValueError(f"SHAZAMKIT_TOKEN_TTL_SECONDS must be between 60 and {APPLE_MAX_TOKEN_TTL_SECONDS}")
         return value
 
+    @field_validator("smtp_security")
+    @classmethod
+    def _smtp_security(cls, value: str) -> str:
+        if value not in {"starttls", "ssl", "none"}:
+            raise ValueError("SMTP_SECURITY must be 'starttls', 'ssl' or 'none'")
+        return value
+
     @field_validator("enhanced_mode")
     @classmethod
     def _mode(cls, value: str) -> str:
@@ -123,6 +137,11 @@ class Settings(BaseSettings):
     @property
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_from)
+
+    @property
+    def email_available(self) -> bool:
+        """Password reset and email verification need accounts and an SMTP server."""
+        return self.accounts_available and self.smtp_configured
 
     def read_apple_private_key(self) -> str:
         path = Path(self.apple_private_key_path)
